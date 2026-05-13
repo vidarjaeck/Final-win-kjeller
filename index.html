@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Mitt Vinskap</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/htm@3/dist/htm.umd.js" crossorigin></script>
+  <script src="https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.js" crossorigin></script>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:linear-gradient(135deg,#0f0818 0%,#1a0d2e 50%,#0d1a1a 100%);min-height:100vh;color:#f3e8ff;font-family:'Segoe UI',sans-serif}
+    input,select,button,textarea{font-family:inherit}
+    ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:#3a2a4a;border-radius:2px}
+    @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+    .fade-in{animation:fadeIn .3s ease-out}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .spinner{width:20px;height:20px;border:2px solid #3a2a4a;border-top-color:#a78bfa;border-radius:50%;animation:spin .8s linear infinite;display:inline-block}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<div id="err" style="color:#f87171;padding:20px;font-family:monospace;font-size:13px;white-space:pre-wrap;display:none;position:fixed;bottom:0;left:0;right:0;background:#1a0d2e;border-top:1px solid #f87171;max-height:40vh;overflow:auto;z-index:9999"></div>
+<script>
+window.onerror=function(msg,src,line){var el=document.getElementById('err');el.style.display='block';el.textContent+='ERROR: '+msg+' (line '+line+')\n'};
+</script>
+<script>
+var html = htm.bind(React.createElement);
+var useState = React.useState, useRef = React.useRef, useEffect = React.useEffect;
+
+var SUPABASE_URL = "https://nufwiwdsosdhfhmxpukf.supabase.co";
+var SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im51Zndpd2Rzb3NkaGZobXhwdWtmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzczNjQyNTAsImV4cCI6MjA5Mjk0MDI1MH0.hC1sKsL9n47q2fudi9pISD55-Q4E4fkzv5Jkngc4X_s";
+var ANTHROPIC_KEY = "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";
+var sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: {
+    persistSession: true,
+    storageKey: 'vinskap-auth',
+    storage: window.localStorage,
+    autoRefreshToken: true,
+    detectSessionInUrl: true
+  }
+});
+var currentYear = new Date().getFullYear();
+var TYPE_ORDER = ["R\u00f8d","Hvit","Ros\u00e9","Musserende","Dessert","Annet"];
+var emptyWine = {producer:"",name:"",vintage:"",region:"",subregion:"",country:"",grape:"",type:"R\u00f8d",classification:"",quantity:1,drink_from:"",drink_until:"",temp:"",decant:"",notes:"",food_pairing:"",rating:0,image_data:"",status:"cellar",price:"",price_source:""};
+var FILTER_OPTIONS = [{key:"all",label:"Alle"},{key:"drink_now",label:"Drink n\u00e5",color:"#fb923c"},{key:"prime",label:"Prime",color:"#a78bfa"},{key:"ready",label:"Klar",color:"#34d399"},{key:"young",label:"For ung",color:"#60a5fa"},{key:"past",label:"Passert",color:"#f87171"}];
+var INIT_MSG = {role:"assistant",content:"Bonsoir! Jeg er din personlige AI-sommelier. Fortell meg hva du skal spise i kveld!"};
+
+function drinkWindowStatus(w){
+  var f=parseInt(w.drink_from),u=parseInt(w.drink_until);
+  if(!f||!u) return {label:"Ukjent",color:"#9ca3af"};
+  if(currentYear<f) return {label:"For ung",color:"#60a5fa"};
+  if(currentYear>u) return {label:"Passert",color:"#f87171"};
+  var pct=(currentYear-f)/(u-f);
+  if(pct<0.4) return {label:"Klar",color:"#34d399"};
+  if(pct<0.75) return {label:"Prime",color:"#a78bfa"};
+  return {label:"Drink naa",color:"#fb923c"};
+}
+
+function groupWines(wines){
+  var g={};
+  wines.forEach(function(w){
+    var type=w.type||"Annet",country=w.country||"Ukjent",region=w.region||"Ukjent",sub=w.subregion||"";
+    if(!g[type])g[type]={};if(!g[type][country])g[type][country]={};
+    if(!g[type][country][region])g[type][country][region]={};
+    if(!g[type][country][region][sub])g[type][country][region][sub]=[];
+    g[type][country][region][sub].push(w);
+  });
+  return g;
+}
+
+async function callClaude(sys,msgs,mt){
+  if(!ANTHROPIC_KEY) return null;
+  var r=await fetch("https://api.anthropic.com/v1/messages",{
+    method:"POST",headers:{"Content-Type":"application/json","x-api-key":ANTHROPIC_KEY,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+    body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:mt||500,system:sys,messages:msgs})
+  });
+  var d=await r.json();return d.content[0].text;
+}
+
+function AuthScreen(props){
+  var s=useState("login"),mode=s[0],setMode=s[1];
+  var s2=useState(""),email=s2[0],setEmail=s2[1];
+  var s3=useState(""),password=s3[0],setPassword=s3[1];
+  var s4=useState(""),displayName=s4[0],setDisplayName=s4[1];
+  var s5=useState(false),loading=s5[0],setLoading=s5[1];
+  var s6=useState(""),msg=s6[0],setMsg=s6[1];
+  var s7=useState("info"),msgType=s7[0],setMsgType=s7[1];
+  var iS={width:"100%",padding:"12px 14px",borderRadius:10,border:"1px solid #3a2a4a",background:"#1e1228",color:"#f3e8ff",fontSize:14,marginBottom:10};
+
+  async function handleSubmit(e){
+    e.preventDefault();setLoading(true);setMsg("");
+    try{
+      if(mode==="login"){var d=await sb.auth.signInWithPassword({email:email,password:password});if(d.error)throw d.error;props.onAuth(d.data.session);}
+      else if(mode==="signup"){var d2=await sb.auth.signUp({email:email,password:password,options:{data:{display_name:displayName||email.split("@")[0]}}});if(d2.error)throw d2.error;setMsg("Konto opprettet! Logg inn.");setMsgType("success");}
+      else{var d3=await sb.auth.resetPasswordForEmail(email);if(d3.error)throw d3.error;setMsg("Lenke sendt til "+email);setMsgType("success");}
+    }catch(err){setMsg(err.message||"Noe gikk galt");setMsgType("error");}
+    setLoading(false);
+  }
+
+  return html`<div style=${{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+    <div class="fade-in" style=${{width:"100%",maxWidth:400,background:"rgba(255,255,255,0.03)",border:"1px solid #2a1a3a",borderRadius:20,padding:30}}>
+      <div style=${{textAlign:"center",marginBottom:24}}>
+        <div style=${{fontSize:48,marginBottom:8}}>${"\uD83C\uDF77"}</div>
+        <div style=${{fontSize:24,fontWeight:700}}>Mitt Vinskap</div>
+        <div style=${{color:"#a78bfa",fontSize:13,marginTop:4}}>${mode==="login"?"Logg inn":mode==="signup"?"Opprett konto":"Tilbakestill passord"}</div>
+      </div>
+      ${msg&&html`<div class="fade-in" style=${{padding:"10px 14px",borderRadius:10,background:msgType==="success"?"rgba(52,211,153,0.15)":"rgba(248,113,113,0.15)",fontSize:13,textAlign:"center",marginBottom:10,color:msgType==="success"?"#34d399":"#f87171"}}>${msg}</div>`}
+      <form onSubmit=${handleSubmit}>
+        ${mode==="signup"&&html`<input placeholder="Visningsnavn" value=${displayName} onChange=${function(e){setDisplayName(e.target.value)}} style=${iS}/>`}
+        <input type="email" placeholder="E-post" value=${email} onChange=${function(e){setEmail(e.target.value)}} required style=${iS}/>
+        ${mode!=="reset"&&html`<input type="password" placeholder="Passord (min 6 tegn)" value=${password} onChange=${function(e){setPassword(e.target.value)}} required minLength=6 style=${iS}/>`}
+        <button type="submit" disabled=${loading} style=${{width:"100%",padding:"14px",borderRadius:12,background:loading?"#3a2a4a":"linear-gradient(135deg,#7c3aed,#5b21b6)",border:"none",color:"white",fontSize:15,fontWeight:600,cursor:"pointer",marginTop:4}}>
+          ${loading?"...":mode==="login"?"Logg inn":mode==="signup"?"Opprett konto":"Send lenke"}
+        </button>
+      </form>
+      <div style=${{display:"flex",justifyContent:"center",gap:16,marginTop:16,fontSize:13}}>
+        ${mode!=="login"&&html`<button onClick=${function(){setMode("login");setMsg("")}} style=${{background:"none",border:"none",color:"#a78bfa",cursor:"pointer"}}>Logg inn</button>`}
+        ${mode!=="signup"&&html`<button onClick=${function(){setMode("signup");setMsg("")}} style=${{background:"none",border:"none",color:"#a78bfa",cursor:"pointer"}}>Ny konto</button>`}
+        ${mode!=="reset"&&html`<button onClick=${function(){setMode("reset");setMsg("")}} style=${{background:"none",border:"none",color:"#6b7280",cursor:"pointer"}}>Glemt passord?</button>`}
+      </div>
+    </div>
+  </div>`;
+}
+
+function App(){
+  var s1=useState(null),session=s1[0],setSession=s1[1];
+  var s2=useState(true),loading=s2[0],setLoading=s2[1];
+  useEffect(function(){
+    sb.auth.getSession().then(function(r){setSession(r.data.session);setLoading(false);});
+    var sub=sb.auth.onAuthStateChange(function(_,sess){setSession(sess)});
+    return function(){sub.data.subscription.unsubscribe()};
+  },[]);
+  if(loading) return html`<div style=${{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center"}}><div class="spinner" style=${{width:32,height:32}}></div></div>`;
+  if(!session) return html`<${AuthScreen} onAuth=${setSession}/>`;
+  return html`<${WineApp} session=${session}/>`;
+}
+
+function WineApp(props){
+  var session=props.session, userId=session.user.id;
+  var s=useState([]),wines=s[0],setWines=s[1];
+  var s2=useState(true),loadingDb=s2[0],setLoadingDb=s2[1];
+  var s3=useState(0),tab=s3[0],setTab=s3[1];
+  var s4=useState([INIT_MSG]),messages=s4[0],setMessages=s4[1];
+  var s5=useState(""),chatInput=s5[0],setChatInput=s5[1];
+  var s6=useState(false),chatLoading=s6[0],setChatLoading=s6[1];
+  var s7=useState(Object.assign({},emptyWine)),newWine=s7[0],setNewWine=s7[1];
+  var s8=useState(""),addStatus=s8[0],setAddStatus=s8[1];
+  var s9=useState(null),selectedWine=s9[0],setSelectedWine=s9[1];
+  var s10=useState(null),editWine=s10[0],setEditWine=s10[1];
+  var s11=useState(""),editStatus=s11[0],setEditStatus=s11[1];
+  var s12=useState(""),searchQuery=s12[0],setSearchQuery=s12[1];
+  var s13=useState(false),searchLoading=s13[0],setSearchLoading=s13[1];
+  var s14=useState({}),collapsed=s14[0],setCollapsed=s14[1];
+  var s15=useState(null),profile=s15[0],setProfile=s15[1];
+  var s16=useState({outgoing:[],incoming:[]}),shares=s16[0],setShares=s16[1];
+  var s17=useState(""),shareEmail=s17[0],setShareEmail=s17[1];
+  var s18=useState(""),shareStatus=s18[0],setShareStatus=s18[1];
+  var s21=useState("collection"),shareType=s21[0],setShareType=s21[1];
+  var s22=useState(null),shareWineId=s22[0],setShareWineId=s22[1];
+  var s23=useState(null),duplicateWine=s23[0],setDuplicateWine=s23[1];
+  var s24=useState("all"),activeFilter=s24[0],setActiveFilter=s24[1];
+  var s25=useState(false),showWishlist=s25[0],setShowWishlist=s25[1];
+  var s26=useState(""),lastImageData=s26[0],setLastImageData=s26[1];
+  var s27=useState(null),aiQuestions=s27[0],setAiQuestions=s27[1];
+  var s28=useState(""),aiAnswer=s28[0],setAiAnswer=s28[1];
+  var s29=useState(null),pendingImageBase64=s29[0],setPendingImageBase64=s29[1];
+  var s30=useState(null),pendingImageType=s30[0],setPendingImageType=s30[1];
+  var s31=useState(false),refreshLoading=s31[0],setRefreshLoading=s31[1];
+  var s19=useState(false),imageLoading=s19[0],setImageLoading=s19[1];
+  var s20=useState(null),imgPreview=s20[0],setImgPreview=s20[1];
+  var chatEndRef=useRef(null);
+  var fileRef=useRef(null);
+
+  useEffect(function(){console.log("WineApp loaded, userId:",userId);loadProfile();loadWines();loadChat();loadShares();},[]);
+  useEffect(function(){if(chatEndRef.current)chatEndRef.current.scrollIntoView({behavior:"smooth"})},[messages]);
+
+  async function loadProfile(){
+    var r=await sb.from("profiles").select("*").eq("id",userId).single();
+    if(r.data){setProfile(r.data);
+      // Hold Supabase aktiv - oppdater profil-timestamp saa databasen ikke pauses
+      sb.from("profiles").update({updated_at:new Date().toISOString()}).eq("id",userId).then(function(){});
+    }
+  }
+  async function loadWines(){
+    setLoadingDb(true);
+    try{
+      var r=await sb.from("wines").select("id,owner_id,producer,name,vintage,region,subregion,country,grape,type,classification,quantity,drink_from,drink_until,temp,decant,notes,food_pairing,rating,status,price,price_source,created_at,updated_at").eq("owner_id",userId).order("created_at",{ascending:false});
+      if(r.error){console.error("loadWines error:",r.error);setAddStatus("DB-feil: "+r.error.message);setLoadingDb(false);return;}
+      console.log("Loaded wines:",r.data?r.data.length:0);
+      setWines(r.data||[]);
+    }catch(ex){console.error("loadWines exception:",ex);setAddStatus("Feil: "+ex.message);}
+    setLoadingDb(false);
+  }
+  async function loadWineImage(wineId){
+    var r=await sb.from("wines").select("image_data").eq("id",wineId).single();
+    if(r.data&&r.data.image_data){
+      setWines(function(p){return p.map(function(w){return w.id===wineId?Object.assign({},w,{image_data:r.data.image_data}):w})});
+    }
+  }
+  async function loadChat(){
+    var r=await sb.from("chat_history").select("*").eq("user_id",userId).order("created_at",{ascending:true});
+    if(r.data&&r.data.length>0) setMessages([INIT_MSG].concat(r.data.map(function(m){return{role:m.role,content:m.content}})));
+  }
+  async function loadShares(){
+    try{var r1=await sb.from("wine_shares").select("*").eq("owner_id",userId);var r2=await sb.from("wine_shares").select("*").eq("shared_with_id",userId).eq("status","active");setShares({outgoing:r1.data||[],incoming:r2.data||[]});}catch(e){setShares({outgoing:[],incoming:[]});}
+  }
+  async function updateQuantity(wine,delta){
+    var nq=Math.max(0,wine.quantity+delta);
+    await sb.from("wines").update({quantity:nq}).eq("id",wine.id);
+    setWines(function(p){return p.map(function(w){return w.id===wine.id?Object.assign({},w,{quantity:nq}):w})});
+  }
+  async function updateRating(wine,rating){
+    await sb.from("wines").update({rating:rating}).eq("id",wine.id);
+    setWines(function(p){return p.map(function(w){return w.id===wine.id?Object.assign({},w,{rating:rating}):w})});
+  }
+  async function saveEdit(){
+    setEditStatus("Lagrer...");
+    var r=await sb.from("wines").update({producer:editWine.producer,name:editWine.name,vintage:parseInt(editWine.vintage),region:editWine.region,subregion:editWine.subregion,country:editWine.country,grape:editWine.grape,type:editWine.type,classification:editWine.classification,quantity:parseInt(editWine.quantity),drink_from:parseInt(editWine.drink_from),drink_until:parseInt(editWine.drink_until),temp:editWine.temp,decant:editWine.decant,notes:editWine.notes,food_pairing:editWine.food_pairing||"",rating:parseInt(editWine.rating),price:editWine.price||"",price_source:editWine.price_source||""}).eq("id",editWine.id);
+    if(r.error){setEditStatus("Feil: "+r.error.message);return;}
+    setWines(function(p){return p.map(function(w){return w.id===editWine.id?editWine:w})});
+    setEditStatus("Lagret!");setTimeout(function(){setEditWine(null);setEditStatus("")},1200);
+  }
+  async function deleteWine(wine){
+    if(!confirm("Slette "+wine.name+"?"))return;
+    await sb.from("wines").delete().eq("id",wine.id);
+    setWines(function(p){return p.filter(function(w){return w.id!==wine.id})});setSelectedWine(null);
+  }
+  var AI_WINE_PROMPT='Du er en vinekspert. Returner ALLTID gyldig JSON og INGENTING annet.\n\nTo mulige svar-formater:\n\nFormat A - hvis du er usikker paa vintype eller aargang mangler:\n{"questions":["Er dette roedvin eller hvitvin?","Hva er aargangen?"]}\n\nFormat B - hvis du har nok info:\n{"producer":"","name":"","vintage":2020,"region":"","subregion":"","country":"","grape":"","type":"R\u00f8d","classification":"","drink_from":2024,"drink_until":2035,"temp":"16-18C","decant":"1 time","notes":"","food_pairing":"3 retter","rating":88,"price":"ca 200 NOK","price_source":"Vinmonopolet","confidence":"high","type_reasoning":""}\n\nType skal vaere: R\u00f8d, Hvit, Ros\u00e9, Musserende eller Dessert.\nRating: 0-100 Robert Parker-skala.\nPris: Estimer NOK-pris, helst fra Vinmonopolet.\n\nRegler for vintype:\n- Groenn/klar flaske + hvite druer = Hvit\n- Moerk flaske + roede druer = R\u00f8d\n- Bourgogne UTEN Blanc/Rouge = spoer brukeren (Format A)\n- Cotes du Rhone i groenn flaske = Hvit';
+
+  async function handleImage(e){
+    var file=e.target.files[0];if(!file)return;
+    setImageLoading(true);setAddStatus("");setAiQuestions(null);
+    var preview=URL.createObjectURL(file);setImgPreview(preview);
+    var reader=new FileReader();
+    reader.onload=async function(){
+      var fullData=reader.result;
+      var base64=fullData.split(",")[1];
+      setLastImageData(fullData);setPendingImageBase64(base64);setPendingImageType(file.type);
+      await analyzeImage(base64,file.type,fullData,"");
+    };reader.readAsDataURL(file);
+  }
+
+  async function analyzeImage(base64,mimeType,fullData,extraContext){
+    setImageLoading(true);
+    try{
+      var userText="Identifiser vinen paa bildet. Returner KUN gyldig JSON. Hvis usikker paa type (roed/hvit) eller aargang mangler, inkluder questions-felt.";
+      if(extraContext) userText+="\n\nBrukeren svarte: "+extraContext;
+      var msgContent=base64?[{type:"image",source:{type:"base64",media_type:mimeType,data:base64}},{type:"text",text:userText}]:userText;
+      var r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":ANTHROPIC_KEY,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1500,system:AI_WINE_PROMPT,messages:[{role:"user",content:msgContent}]})});
+      if(!r.ok){setAddStatus("API-feil: "+r.status);setImageLoading(false);return;}
+      var d=await r.json();
+      if(!d.content||!d.content[0]){setAddStatus("Tomt svar fra AI.");setImageLoading(false);return;}
+      var raw=(d.content[0].text||"").replace(/```json|```/g,"").trim();
+      // Finn JSON i svaret selv om AI legger til tekst rundt
+      var jsonMatch=raw.match(/\{[\s\S]*\}/);
+      if(!jsonMatch){setAddStatus("AI svarte uten JSON: "+raw.substring(0,100));setImageLoading(false);return;}
+      var p=JSON.parse(jsonMatch[0]);
+      if(p.questions&&p.questions.length>0){
+        setAiQuestions(p.questions);setAiAnswer("");
+        setAddStatus("AI trenger mer info - svar paa spoersmaalene under");
+        setImageLoading(false);return;
+      }
+      setAiQuestions(null);
+      setNewWine(function(prev){return Object.assign({},prev,p,{quantity:prev.quantity||1,rating:parseInt(p.rating)||85,image_data:fullData||prev.image_data})});
+      var priceInfo=p.price?" | ca "+p.price+(p.price_source?" ("+p.price_source+")":""):"";
+      setAddStatus((p.producer||"")+" "+p.name+" "+(p.vintage||"")+" | "+(p.type||"")+" | "+(p.rating||85)+"p"+priceInfo);
+    }catch(ex){setAddStatus("Feil: "+ex.message);}
+    setImageLoading(false);
+  }
+
+  async function submitAiAnswer(){
+    if(!aiAnswer.trim())return;
+    setAiQuestions(null);
+    await analyzeImage(pendingImageBase64,pendingImageType,lastImageData,aiAnswer);
+  }
+
+  async function refreshWineData(wine){
+    setRefreshLoading(true);
+    try{
+      var searchText=wine.producer+" "+wine.name+" "+wine.vintage+" "+wine.region;
+      var t=await callClaude(AI_WINE_PROMPT,[{role:"user",content:"Oppdater all info for denne vinen: "+searchText}],1500);
+      var p=JSON.parse((t||"{}").replace(/```json|```/g,"").trim());
+      if(p.questions){setRefreshLoading(false);return;}
+      var updated=Object.assign({},wine,p,{rating:parseInt(p.rating)||wine.rating});
+      await sb.from("wines").update({region:updated.region,subregion:updated.subregion,grape:updated.grape,classification:updated.classification,drink_from:parseInt(updated.drink_from),drink_until:parseInt(updated.drink_until),temp:updated.temp,decant:updated.decant,notes:updated.notes,food_pairing:updated.food_pairing,rating:parseInt(updated.rating),price:updated.price||"",price_source:updated.price_source||""}).eq("id",wine.id);
+      setWines(function(prev){return prev.map(function(w){return w.id===wine.id?updated:w})});
+      setSelectedWine(updated);
+      setAddStatus("Vin oppdatert!");setTimeout(function(){setAddStatus("")},3000);
+    }catch(ex){setAddStatus("Kunne ikke oppdatere.");}
+    setRefreshLoading(false);
+  }
+
+  async function doWineSearch(){
+    if(!searchQuery.trim())return;setSearchLoading(true);
+    try{
+      var t=await callClaude(AI_WINE_PROMPT,[{role:"user",content:"Finn info for: "+searchQuery}],1500);
+      var p=JSON.parse((t||"{}").replace(/```json|```/g,"").trim());
+      setNewWine(function(prev){return Object.assign({},prev,p,{quantity:prev.quantity||1,rating:parseInt(p.rating)||85})});
+      setAddStatus((p.producer||"")+" "+p.name+" | "+p.type+" | "+(p.rating||85)+" poeng"+(p.type_reasoning?" | "+p.type_reasoning:""));
+    }catch(ex){setAddStatus("Kunne ikke finne vininfo.");}
+    setSearchLoading(false);
+  }
+
+  function findDuplicate(){
+    var name=(newWine.name||"").toLowerCase().trim();
+    var vintage=parseInt(newWine.vintage);
+    var producer=(newWine.producer||"").toLowerCase().trim();
+    return wines.find(function(w){
+      var wName=(w.name||"").toLowerCase().trim();
+      var wProducer=(w.producer||"").toLowerCase().trim();
+      return wName===name && parseInt(w.vintage)===vintage && wProducer===producer;
+    });
+  }
+
+  async function addWine(){
+    if(!newWine.name||!newWine.vintage){setAddStatus("Navn og aargang kreves.");return;}
+    var existing=findDuplicate();
+    if(existing){
+      setDuplicateWine(existing);
+      return;
+    }
+    await doAddWine();
+  }
+
+  async function doAddWine(targetStatus){
+    var st=targetStatus||"cellar";
+    setAddStatus("Lagrer...");setDuplicateWine(null);
+    var imgSmall=newWine.image_data||lastImageData||"";
+    var wine={owner_id:userId,producer:newWine.producer,name:newWine.name,vintage:parseInt(newWine.vintage),quantity:parseInt(newWine.quantity)||1,region:newWine.region,subregion:newWine.subregion,country:newWine.country,grape:newWine.grape,type:newWine.type,classification:newWine.classification,drink_from:parseInt(newWine.drink_from)||parseInt(newWine.vintage)+2,drink_until:parseInt(newWine.drink_until)||parseInt(newWine.vintage)+15,temp:newWine.temp||"16-18C",decant:newWine.decant||"Nei",notes:newWine.notes,food_pairing:newWine.food_pairing||"",rating:parseInt(newWine.rating)||0,image_data:imgSmall,status:st,price:newWine.price||"",price_source:newWine.price_source||""};
+    var r=await sb.from("wines").insert(wine).select().single();
+    if(r.error){setAddStatus("Feil: "+r.error.message);return;}
+    setWines(function(p){return[r.data].concat(p)});
+    setNewWine(Object.assign({},emptyWine));setImgPreview(null);setLastImageData("");
+    setTab(0);
+    if(st==="wishlist"){setShowWishlist(true)}else{setShowWishlist(false);setActiveFilter("all")}
+    setSelectedWine(r.data);
+    setAddStatus("");
+  }
+
+  async function mergeWithExisting(){
+    if(!duplicateWine)return;
+    var addQty=parseInt(newWine.quantity)||1;
+    var newQty=(parseInt(duplicateWine.quantity)||0)+addQty;
+    await sb.from("wines").update({quantity:newQty}).eq("id",duplicateWine.id);
+    var updatedWine=Object.assign({},duplicateWine,{quantity:newQty});
+    setWines(function(p){return p.map(function(w){return w.id===duplicateWine.id?updatedWine:w})});
+    setDuplicateWine(null);
+    setNewWine(Object.assign({},emptyWine));setImgPreview(null);
+    setTab(0);setShowWishlist(false);setActiveFilter("all");
+    setSelectedWine(updatedWine);
+    setAddStatus("");
+    setTimeout(function(){setAddStatus("")},4000);
+  }
+  async function sendMessage(){
+    if(!chatInput.trim()||chatLoading)return;
+    var userMsg=chatInput.trim();setChatInput("");
+    setMessages(function(p){return p.concat([{role:"user",content:userMsg}])});setChatLoading(true);
+    try{
+      await sb.from("chat_history").insert({user_id:userId,role:"user",content:userMsg});
+      var cellar=wines.filter(function(w){return w.status!=="wishlist"});
+      var wl=cellar.map(function(w){var st=drinkWindowStatus(w);return"- "+(w.producer?w.producer+" ":"")+w.name+" "+w.vintage+" | "+w.type+" | "+w.grape+" | "+w.region+" | "+(w.rating||0)+"p | "+st.label+" | x"+w.quantity+(w.food_pairing?" | Passer til: "+w.food_pairing:"")}).join("\n");
+      var reply=await callClaude("Du er en entusiastisk og kunnskapsrik AI-sommelier. Snakk alltid norsk.\n\nBrukerens vinkjeller:\n"+(wl||"Tom kjeller.")+"\n\nRegler:\n- Anbefal ALLTID fra kjelleren foerst naar brukeren spoer om vin til mat\n- Naar du nevner en vin fra kjelleren, skriv vinnavnet i klammer slik: [Produsent Vinnavn Aargang] saa brukeren kan klikke paa den\n- Gi BAADE en premium-anbefaling (beste vin fra kjelleren) OG en budsjett-anbefaling (rimeligste/enkleste som fortsatt passer)\n- Forklar hvorfor vinen passer (drue, region, smaksprofil)\n- Nevn drikkevindu-status og poeng\n- Hvis ingen vin i kjelleren passer, foreslaa hva brukeren burde kjope med estimert pris\n- Gi gjerne oppskrifter naar du anbefaler vin til mat\n- Vaer poetisk og entusiastisk om vin",messages.concat([{role:"user",content:userMsg}]).slice(-20),2000);
+      var rt=reply||"Beklager, AI er ikke konfigurert.";
+      setMessages(function(p){return p.concat([{role:"assistant",content:rt}])});
+      await sb.from("chat_history").insert({user_id:userId,role:"assistant",content:rt});
+    }catch(ex){setMessages(function(p){return p.concat([{role:"assistant",content:"Feil: "+ex.message}])});}
+    setChatLoading(false);
+  }
+  async function clearChat(){await sb.from("chat_history").delete().eq("user_id",userId);setMessages([INIT_MSG]);}
+  async function createShare(){
+    if(!shareEmail.trim()){setShareStatus("Skriv inn e-post.");return;}
+    if(shareType==="wine"&&!shareWineId){setShareStatus("Velg en vin aa dele.");return;}
+    setShareStatus("Oppretter...");
+    var tp=await sb.from("profiles").select("id").eq("email",shareEmail.trim()).maybeSingle();
+    var r=await sb.from("wine_shares").insert({owner_id:userId,shared_with_id:tp.data?tp.data.id:null,share_type:shareType,wine_id:shareType==="wine"?shareWineId:null,invited_email:shareEmail.trim()});
+    if(r.error){setShareStatus("Feil: "+r.error.message);return;}
+    setShareStatus("Delt!");setShareEmail("");loadShares();setTimeout(function(){setShareStatus("")},4000);
+  }
+  async function logout(){await sb.auth.signOut();}
+  function toggleCollapse(key){setCollapsed(function(p){var n=Object.assign({},p);n[key]=!n[key];return n})}
+
+  var iS={width:"100%",padding:"10px 12px",borderRadius:8,border:"1px solid #3a2a4a",background:"#1e1228",color:"#f3e8ff",fontSize:14,boxSizing:"border-box",marginBottom:8};
+  var btnS={flex:1,padding:"8px",borderRadius:8,background:"#7c3aed33",border:"1px solid #7c3aed66",color:"#c4b5fd",cursor:"pointer",fontSize:13};
+  function inp(f,ph,obj,set){return html`<input placeholder=${ph} value=${obj[f]||""} onChange=${function(e){set(function(p){var n=Object.assign({},p);n[f]=e.target.value;return n})}} style=${iS}/>`}
+  function numI(f,ph,obj,set){return html`<input type="number" placeholder=${ph} value=${obj[f]||""} onChange=${function(e){set(function(p){var n=Object.assign({},p);n[f]=e.target.value;return n})}} style=${Object.assign({},iS,{marginBottom:0})}/>`}
+  function onTypeChange(newType,set){
+    var defaults={"R\u00f8d":{temp:"16-18\u00b0C",decant:"1 time"},"Hvit":{temp:"8-12\u00b0C",decant:"Nei"},"Ros\u00e9":{temp:"8-10\u00b0C",decant:"Nei"},"Musserende":{temp:"6-8\u00b0C",decant:"Nei"},"Dessert":{temp:"10-12\u00b0C",decant:"Nei"}};
+    var d=defaults[newType]||{};
+    set(function(p){return Object.assign({},p,{type:newType,temp:d.temp||p.temp,decant:d.decant||p.decant})});
+  }
+  function selI(obj,set){return html`<select value=${obj.type} onChange=${function(e){onTypeChange(e.target.value,set)}} style=${iS}><option>R\u00f8d</option><option>Hvit</option><option>Ros\u00e9</option><option>Musserende</option><option>Dessert</option></select>`}
+
+  async function reAnalyzeWithCorrections(){
+    if(!newWine.name){setAddStatus("Fyll inn vinnavn foerst.");return;}
+    setImageLoading(true);setAddStatus("Oppdaterer med rettelser...");
+    try{
+      var context="Brukeren har korrigert: Type="+newWine.type+", Produsent="+(newWine.producer||"ukjent")+", Navn="+newWine.name+", Aargang="+(newWine.vintage||"ukjent")+", Druer="+(newWine.grape||"ukjent")+", Region="+(newWine.region||"ukjent")+". Oppdater ALLE andre felt (drikkevindu, temp, dekantering, mat, notater, pris, rating) basert paa disse rettelsene. Returner komplett JSON.";
+      var t=await callClaude(AI_WINE_PROMPT,[{role:"user",content:context}],1500);
+      var jsonMatch=(t||"").match(/\{[\s\S]*\}/);
+      if(!jsonMatch){setAddStatus("Kunne ikke oppdatere.");setImageLoading(false);return;}
+      var p=JSON.parse(jsonMatch[0]);
+      if(p.questions){setAddStatus("Fyll inn mer info og proev igjen.");setImageLoading(false);return;}
+      setNewWine(function(prev){return Object.assign({},prev,{drink_from:p.drink_from||prev.drink_from,drink_until:p.drink_until||prev.drink_until,temp:p.temp||prev.temp,decant:p.decant||prev.decant,notes:p.notes||prev.notes,food_pairing:p.food_pairing||prev.food_pairing,rating:parseInt(p.rating)||prev.rating,price:p.price||prev.price,price_source:p.price_source||prev.price_source,classification:p.classification||prev.classification})});
+      setAddStatus("Oppdatert! "+newWine.type+" | "+(p.rating||"")+"p | "+(p.temp||""));
+    }catch(ex){setAddStatus("Feil: "+ex.message);}
+    setImageLoading(false);
+  }
+
+  var cellarWines=wines.filter(function(w){return w.status!=="wishlist"});
+  var wishlistWines=wines.filter(function(w){return w.status==="wishlist"});
+  var filteredWines=showWishlist?wishlistWines:cellarWines.filter(function(w){
+    if(activeFilter==="all")return true;
+    var st=drinkWindowStatus(w);
+    if(activeFilter==="drink_now")return st.label==="Drink nå";
+    if(activeFilter==="prime")return st.label==="Prime";
+    if(activeFilter==="ready")return st.label==="Klar";
+    if(activeFilter==="young")return st.label==="For ung";
+    if(activeFilter==="past")return st.label==="Passert";
+    return true;
+  });
+  var grouped=groupWines(filteredWines);
+  var totalBottles=cellarWines.reduce(function(a,w){return a+(parseInt(w.quantity)||0)},0);
+  var cSet={},rSet={};cellarWines.forEach(function(w){if(w.country)cSet[w.country]=1;if(w.region)rSet[w.region]=1});
+  var statC=Object.keys(cSet).length,statR=Object.keys(rSet).length;
+  var typeCounts={};cellarWines.forEach(function(w){var t=w.type||"Annet";typeCounts[t]=(typeCounts[t]||0)+(parseInt(w.quantity)||0)});
+  var typeColors={"R\u00f8d":"#ef4444","Hvit":"#eab308","Ros\u00e9":"#f472b6","Musserende":"#a78bfa","Dessert":"#fb923c","Annet":"#6b7280"};
+
+  function WineCard(p){
+    var w=p.wine,st=drinkWindowStatus(w),isSel=selectedWine&&selectedWine.id===w.id;
+    var isWish=w.status==="wishlist";
+    return html`<div onClick=${function(){if(isSel){setSelectedWine(null)}else{setSelectedWine(w);if(!w.image_data)loadWineImage(w.id);}}} style=${{background:isWish?"rgba(245,158,11,0.06)":"rgba(255,255,255,0.04)",border:"1px solid "+(isSel?"#7c3aed44":isWish?"rgba(245,158,11,0.2)":"#2a1a3a"),borderRadius:10,padding:"10px 12px",marginBottom:6,cursor:"pointer"}}>
+      <div style=${{display:"flex",gap:10,alignItems:"flex-start"}}>
+        ${w.image_data&&html`<img src=${w.image_data} style=${{width:40,height:54,borderRadius:6,objectFit:"cover",border:"1px solid #2a1a3a",flexShrink:0}}/>`}
+        <div style=${{flex:1,minWidth:0}}>
+          ${w.producer&&html`<div style=${{color:"#a78bfa",fontSize:11}}>${w.producer}</div>`}
+          <div style=${{fontWeight:600,fontSize:13}}>${w.name}</div>
+          <div style=${{color:"#9ca3af",fontSize:11,marginTop:2}}>${w.vintage} ${w.grape?"- "+w.grape:""}${w.rating>0?" | "+w.rating+"p":""}</div>
+        </div>
+        <div style=${{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:3,flexShrink:0}}>
+          ${isWish?html`<span style=${{background:"rgba(245,158,11,0.15)",color:"#f59e0b",border:"1px solid rgba(245,158,11,0.3)",borderRadius:20,padding:"2px 7px",fontSize:10,fontWeight:600}}>Onskeliste</span>`:html`<span style=${{background:st.color+"22",color:st.color,border:"1px solid "+st.color+"44",borderRadius:20,padding:"2px 7px",fontSize:10,fontWeight:600}}>${st.label}</span>`}
+          ${!isWish&&html`<span style=${{color:"#a78bfa",fontSize:11}}>x${w.quantity}</span>`}
+        </div>
+      </div>
+      ${isSel&&html`<div style=${{marginTop:10,paddingTop:10,borderTop:"1px solid #2a1a3a"}}>
+        <div style=${{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,fontSize:11,marginBottom:8}}>
+          <div><span style=${{color:"#9ca3af"}}>Drikkevindu</span><br/>${w.drink_from}-${w.drink_until}</div>
+          <div><span style=${{color:"#9ca3af"}}>Temperatur</span><br/>${w.temp||"Ikke satt"}</div>
+          <div><span style=${{color:"#9ca3af"}}>Dekantering</span><br/>${w.decant||"Ikke satt"}</div>
+          ${w.rating>0&&html`<div><span style=${{color:"#9ca3af"}}>Poeng</span><br/><span style=${{fontWeight:700,color:w.rating>=90?"#34d399":w.rating>=85?"#a78bfa":"#f3e8ff"}}>${w.rating}/100</span></div>`}
+          ${w.price&&html`<div><span style=${{color:"#9ca3af"}}>Pris</span><br/>${w.price}${w.price_source?" ("+w.price_source+")":""}</div>`}
+          ${w.notes&&html`<div style=${{gridColumn:"1/-1"}}><span style=${{color:"#9ca3af"}}>Notat</span><br/>${w.notes}</div>`}
+          ${w.food_pairing&&html`<div style=${{gridColumn:"1/-1"}}><span style=${{color:"#9ca3af"}}>Passer til</span><br/>${w.food_pairing}</div>`}
+          ${w.image_data&&html`<div style=${{gridColumn:"1/-1",textAlign:"center",marginTop:4}}><img src=${w.image_data} style=${{maxHeight:150,maxWidth:"100%",borderRadius:8,border:"1px solid #2a1a3a",objectFit:"contain"}}/></div>`}
+        </div>
+        <div style=${{display:"flex",gap:6}}>
+          <button onClick=${function(e){e.stopPropagation();updateQuantity(w,-1)}} style=${btnS}>- Drakk en</button>
+          <button onClick=${function(e){e.stopPropagation();updateQuantity(w,1)}} style=${btnS}>+ Kjopte</button>
+          <button onClick=${function(e){e.stopPropagation();refreshWineData(w)}} disabled=${refreshLoading} style=${{padding:"8px 10px",borderRadius:8,background:"rgba(52,211,153,0.15)",border:"1px solid rgba(52,211,153,0.3)",color:"#34d399",cursor:"pointer",fontSize:12}}>${refreshLoading?"...":"Oppdater"}</button>
+          <button onClick=${function(e){e.stopPropagation();setEditWine(Object.assign({},w));setSelectedWine(null)}} style=${{padding:"8px 10px",borderRadius:8,background:"#7c3aed33",border:"1px solid #7c3aed66",color:"#c4b5fd",cursor:"pointer"}}>Edit</button>
+        </div>
+      </div>`}
+    </div>`;
+  }
+
+  var editModal=editWine&&html`<div style=${{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.85)",zIndex:100,display:"flex",alignItems:"flex-start",justifyContent:"center",overflowY:"auto",padding:"20px 16px"}}>
+    <div class="fade-in" style=${{background:"#1a0d2e",border:"1px solid #3a2a4a",borderRadius:16,padding:20,width:"100%",maxWidth:440}}>
+      <div style=${{display:"flex",justifyContent:"space-between",marginBottom:16}}><div style=${{fontSize:16,fontWeight:700}}>Rediger vin</div><button onClick=${function(){setEditWine(null)}} style=${{background:"none",border:"none",color:"#9ca3af",fontSize:20,cursor:"pointer"}}>X</button></div>
+      ${inp("producer","Produsent",editWine,setEditWine)}${inp("name","Vinnavn",editWine,setEditWine)}
+      <div style=${{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>${numI("vintage","Aargang",editWine,setEditWine)}${numI("quantity","Antall",editWine,setEditWine)}</div>
+      ${inp("region","Region",editWine,setEditWine)}${inp("subregion","Underdistrikt",editWine,setEditWine)}${inp("country","Land",editWine,setEditWine)}${inp("grape","Druer",editWine,setEditWine)}${inp("classification","Klassifikasjon",editWine,setEditWine)}${selI(editWine,setEditWine)}
+      <div style=${{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>${numI("drink_from","Drikk fra",editWine,setEditWine)}${numI("drink_until","Drikk innen",editWine,setEditWine)}</div>
+      ${inp("temp","Temperatur",editWine,setEditWine)}${inp("decant","Dekantering",editWine,setEditWine)}${inp("notes","Smaksnotater",editWine,setEditWine)}${inp("food_pairing","Passer til (mat)",editWine,setEditWine)}${inp("price","Pris (NOK)",editWine,setEditWine)}
+      <div style=${{marginBottom:8}}><div style=${{fontSize:11,color:"#a78bfa",marginBottom:4}}>VURDERING (0-100)</div><input type="number" min="0" max="100" value=${editWine.rating||""} onChange=${function(e){setEditWine(function(p){return Object.assign({},p,{rating:e.target.value})})}} style=${Object.assign({},iS,{width:100,textAlign:"center",fontSize:16,fontWeight:700})}/></div>
+      ${editStatus&&html`<div style=${{padding:10,borderRadius:8,background:"rgba(167,139,250,0.1)",fontSize:13,marginBottom:10,textAlign:"center"}}>${editStatus}</div>`}
+      <div style=${{display:"flex",gap:8}}><button onClick=${saveEdit} style=${{flex:1,padding:14,borderRadius:12,background:"linear-gradient(135deg,#7c3aed,#5b21b6)",border:"none",color:"white",fontSize:15,fontWeight:600,cursor:"pointer"}}>Lagre</button><button onClick=${function(){deleteWine(editWine);setEditWine(null)}} style=${{padding:"14px 18px",borderRadius:12,background:"rgba(248,113,113,0.15)",border:"1px solid rgba(248,113,113,0.27)",color:"#f87171",cursor:"pointer"}}>Slett</button></div>
+    </div>
+  </div>`;
+
+  function goToWine(searchText){
+    var lower=searchText.toLowerCase();
+    var found=wines.find(function(w){
+      var full=((w.producer||"")+" "+w.name+" "+(w.vintage||"")).toLowerCase();
+      return full.indexOf(lower)>=0||lower.indexOf((w.name||"").toLowerCase())>=0;
+    });
+    if(found){setTab(0);setShowWishlist(false);setActiveFilter("all");setSelectedWine(found);}
+  }
+  function renderChatWithLinks(text){
+    var parts=text.split(/\[([^\]]+)\]/g);
+    return parts.map(function(part,i){
+      if(i%2===1){return html`<span key=${i} onClick=${function(){goToWine(part)}} style=${{color:"#a78bfa",textDecoration:"underline",cursor:"pointer",fontWeight:600}}>${part}</span>`}
+      return part;
+    });
+  }
+
+  var dupeModal=duplicateWine&&html`<div style=${{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.85)",zIndex:100,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px 16px"}}>
+    <div class="fade-in" style=${{background:"#1a0d2e",border:"1px solid #3a2a4a",borderRadius:16,padding:24,width:"100%",maxWidth:400}}>
+      <div style=${{fontSize:16,fontWeight:700,marginBottom:12,textAlign:"center"}}>Denne vinen finnes allerede!</div>
+      <div style=${{padding:12,background:"rgba(255,255,255,0.04)",border:"1px solid #2a1a3a",borderRadius:10,marginBottom:16}}>
+        <div style=${{color:"#a78bfa",fontSize:11}}>${duplicateWine.producer}</div>
+        <div style=${{fontWeight:600,fontSize:14}}>${duplicateWine.name} ${duplicateWine.vintage}</div>
+        <div style=${{color:"#9ca3af",fontSize:12,marginTop:4}}>Har naa: ${duplicateWine.quantity} flasker</div>
+        <div style=${{color:"#34d399",fontSize:12}}>Legger til: ${parseInt(newWine.quantity)||1} flasker = ${(parseInt(duplicateWine.quantity)||0)+(parseInt(newWine.quantity)||1)} totalt</div>
+      </div>
+      <div style=${{display:"flex",flexDirection:"column",gap:8}}>
+        <button onClick=${mergeWithExisting} style=${{width:"100%",padding:14,borderRadius:12,background:"linear-gradient(135deg,#7c3aed,#5b21b6)",border:"none",color:"white",fontSize:15,fontWeight:600,cursor:"pointer"}}>Oppdater beholdning (+${parseInt(newWine.quantity)||1})</button>
+        <button onClick=${doAddWine} style=${{width:"100%",padding:12,borderRadius:12,background:"rgba(255,255,255,0.04)",border:"1px solid #3a2a4a",color:"#c4b5fd",fontSize:13,cursor:"pointer"}}>Legg til som ny vin likevel</button>
+        <button onClick=${function(){setDuplicateWine(null)}} style=${{width:"100%",padding:12,borderRadius:12,background:"transparent",border:"none",color:"#6b7280",fontSize:13,cursor:"pointer"}}>Avbryt</button>
+      </div>
+    </div>
+  </div>`;
+
+  return html`<div style=${{minHeight:"100vh",display:"flex",flexDirection:"column",maxWidth:480,margin:"0 auto"}}>
+    ${editModal}
+    ${dupeModal}
+    <div style=${{padding:"20px 20px 10px",background:"rgba(255,255,255,0.03)",borderBottom:"1px solid #2a1a3a"}}>
+      <div style=${{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <div style=${{display:"flex",alignItems:"center",gap:10}}>
+          <span style=${{fontSize:28}}>${"\uD83C\uDF77"}</span>
+          <div><div style=${{fontSize:20,fontWeight:700}}>Mitt Vinskap</div><div style=${{fontSize:12,color:"#a78bfa"}}>${totalBottles} flasker i kjelleren${profile?" - "+profile.display_name:""}</div></div>
+        </div>
+        <button onClick=${loadWines} style=${{background:"none",border:"none",color:"#a78bfa",fontSize:20,cursor:"pointer"}}>${"\u21BB"}</button>
+      </div>
+    </div>
+    <div style=${{display:"flex",borderBottom:"1px solid #2a1a3a",background:"rgba(0,0,0,0.2)"}}>
+      ${["Kjeller","Sommelier","Legg til","Deling","Profil"].map(function(t,i){return html`<button key=${i} onClick=${function(){setTab(i)}} style=${{flex:1,padding:"12px 0",background:"none",border:"none",color:tab===i?"#a78bfa":"#9ca3af",fontWeight:tab===i?700:400,borderBottom:tab===i?"2px solid #a78bfa":"2px solid transparent",cursor:"pointer",fontSize:12}}>${t}</button>`})}
+    </div>
+    <div style=${{flex:1,overflowY:"auto",padding:16}}>
+
+      ${tab===0&&html`<div>
+        <div style=${{display:"flex",gap:6,marginBottom:10}}>
+          <button onClick=${function(){setShowWishlist(false);setActiveFilter("all")}} style=${{flex:1,padding:"8px",borderRadius:8,background:!showWishlist?"rgba(124,58,237,0.3)":"transparent",border:"1px solid "+(!showWishlist?"#7c3aed":"#3a2a4a"),color:!showWishlist?"#c4b5fd":"#6b7280",cursor:"pointer",fontSize:12,fontWeight:!showWishlist?600:400}}>Kjeller (${cellarWines.length})</button>
+          <button onClick=${function(){setShowWishlist(true)}} style=${{flex:1,padding:"8px",borderRadius:8,background:showWishlist?"rgba(245,158,11,0.2)":"transparent",border:"1px solid "+(showWishlist?"rgba(245,158,11,0.4)":"#3a2a4a"),color:showWishlist?"#f59e0b":"#6b7280",cursor:"pointer",fontSize:12,fontWeight:showWishlist?600:400}}>Oenskeliste (${wishlistWines.length})</button>
+        </div>
+        ${!showWishlist&&html`<div style=${{display:"flex",gap:4,marginBottom:10,overflowX:"auto",paddingBottom:4}}>
+          ${FILTER_OPTIONS.map(function(f){var isActive=activeFilter===f.key;return html`<button key=${f.key} onClick=${function(){setActiveFilter(f.key)}} style=${{padding:"5px 10px",borderRadius:16,background:isActive?(f.color||"#7c3aed")+"22":"transparent",border:"1px solid "+(isActive?(f.color||"#7c3aed")+"66":"#2a1a3a"),color:isActive?(f.color||"#c4b5fd"):"#6b7280",cursor:"pointer",fontSize:11,whiteSpace:"nowrap",fontWeight:isActive?600:400}}>${f.label}</button>`})}
+        </div>`}
+        ${loadingDb?html`<div style=${{textAlign:"center",padding:40,color:"#a78bfa"}}>Laster kjelleren...</div>`:html`<div>
+          ${filteredWines.length===0&&html`<div style=${{textAlign:"center",color:"#6b7280",padding:40}}>${showWishlist?"Oenskelisten er tom.":activeFilter!=="all"?"Ingen viner med denne statusen.":"Ingen viner ennaa."}</div>`}
+          ${TYPE_ORDER.filter(function(ty){return grouped[ty]}).map(function(type){
+            var tk="t_"+type;
+            var allW=[];Object.keys(grouped[type]).forEach(function(c){Object.keys(grouped[type][c]).forEach(function(r){Object.keys(grouped[type][c][r]).forEach(function(s){allW=allW.concat(grouped[type][c][r][s])})})});
+            var tot=allW.reduce(function(a,w){return a+(parseInt(w.quantity)||0)},0);
+            return html`<div key=${type} style=${{marginBottom:8}}>
+              <button onClick=${function(){toggleCollapse(tk)}} style=${{width:"100%",display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",background:"rgba(124,58,237,0.2)",border:"1px solid rgba(124,58,237,0.27)",borderRadius:10,cursor:"pointer",marginBottom:4}}>
+                <span style=${{fontWeight:700,fontSize:15,color:"#e9d5ff"}}>${type}</span>
+                <span style=${{color:"#a78bfa",fontSize:12}}>${tot} fl - ${allW.length} ${collapsed[tk]?">":"v"}</span>
+              </button>
+              ${!collapsed[tk]&&Object.keys(grouped[type]).map(function(country){
+                var ck="c_"+type+"_"+country;
+                return html`<div key=${country} style=${{marginLeft:8,marginBottom:4}}>
+                  <button onClick=${function(){toggleCollapse(ck)}} style=${{width:"100%",display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 12px",background:"rgba(255,255,255,0.04)",border:"1px solid #2a1a3a",borderRadius:8,cursor:"pointer",marginBottom:3}}>
+                    <span style=${{fontWeight:600,fontSize:13,color:"#c4b5fd"}}>${country}</span>
+                    <span style=${{color:"#6b7280",fontSize:11}}>${collapsed[ck]?">":" v"}</span>
+                  </button>
+                  ${!collapsed[ck]&&Object.keys(grouped[type][country]).map(function(region){
+                    var rk="r_"+type+"_"+country+"_"+region;
+                    return html`<div key=${region} style=${{marginLeft:8,marginBottom:4}}>
+                      <button onClick=${function(){toggleCollapse(rk)}} style=${{width:"100%",display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 12px",background:"rgba(255,255,255,0.02)",border:"1px solid #1a0d2e",borderRadius:8,cursor:"pointer",marginBottom:3}}>
+                        <span style=${{fontSize:12,color:"#9ca3af"}}>${region}</span>
+                      </button>
+                      ${!collapsed[rk]&&Object.keys(grouped[type][country][region]).map(function(sub){
+                        return html`<div key=${sub||"_"} style=${{marginLeft:8}}>${grouped[type][country][region][sub].map(function(w){return html`<${WineCard} key=${w.id} wine=${w}/>`})}</div>`;
+                      })}
+                    </div>`;
+                  })}
+                </div>`;
+              })}
+            </div>`;
+          })}
+        </div>`}
+      </div>`}
+
+      ${tab===1&&html`<div style=${{display:"flex",flexDirection:"column",height:"calc(100vh - 200px)"}}>
+        <div style=${{display:"flex",justifyContent:"flex-end",marginBottom:8}}><button onClick=${clearChat} style=${{padding:"4px 10px",borderRadius:12,background:"transparent",border:"1px solid #3a2a4a",color:"#6b7280",fontSize:11,cursor:"pointer"}}>Toom chat</button></div>
+        <div style=${{flex:1,overflowY:"auto",paddingBottom:8}}>
+          ${messages.map(function(m,i){return html`<div key=${i} style=${{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start",marginBottom:12}}>
+            <div style=${{maxWidth:"85%",padding:"10px 14px",borderRadius:m.role==="user"?"18px 18px 4px 18px":"18px 18px 18px 4px",background:m.role==="user"?"linear-gradient(135deg,#7c3aed,#5b21b6)":"rgba(255,255,255,0.06)",border:m.role==="assistant"?"1px solid #2a1a3a":"none",fontSize:14,lineHeight:1.6,whiteSpace:"pre-wrap"}}>${m.role==="assistant"?renderChatWithLinks(m.content):m.content}</div>
+          </div>`})}
+          ${chatLoading&&html`<div style=${{display:"flex",justifyContent:"flex-start",marginBottom:12}}><div style=${{padding:"10px 14px",borderRadius:"18px 18px 18px 4px",background:"rgba(255,255,255,0.06)",border:"1px solid #2a1a3a",fontSize:14}}>Tenker...</div></div>`}
+          <div ref=${chatEndRef}/>
+        </div>
+        <div style=${{display:"flex",gap:8,paddingTop:8,borderTop:"1px solid #2a1a3a"}}>
+          <input value=${chatInput} onChange=${function(e){setChatInput(e.target.value)}} onKeyDown=${function(e){if(e.key==="Enter")sendMessage()}} placeholder="Hva skal du spise?" style=${{flex:1,padding:"12px 14px",borderRadius:24,border:"1px solid #3a2a4a",background:"#1e1228",color:"#f3e8ff",fontSize:14}}/>
+          <button onClick=${sendMessage} disabled=${chatLoading} style=${{padding:"12px 16px",borderRadius:24,background:chatLoading?"#3a2a4a":"linear-gradient(135deg,#7c3aed,#5b21b6)",border:"none",color:"white",cursor:"pointer",fontSize:18}}>${"\u2192"}</button>
+        </div>
+      </div>`}
+
+      ${tab===2&&html`<div>
+        <div style=${{marginBottom:16,padding:14,background:"rgba(124,58,237,0.1)",border:"1px solid rgba(124,58,237,0.27)",borderRadius:12}}>
+          <div style=${{fontSize:14,color:"#c4b5fd",marginBottom:10,textAlign:"center",fontWeight:600}}>${"\uD83D\uDCF7"} Ta bilde av etiketten</div>
+          <div style=${{fontSize:12,color:"#9ca3af",marginBottom:10,textAlign:"center"}}>AI fyller ut alle feltene automatisk</div>
+          <input ref=${fileRef} type="file" accept="image/*" capture="environment" onChange=${handleImage} style=${{display:"none"}}/>
+          <div style=${{display:"flex",gap:8}}>
+            <button onClick=${function(){fileRef.current.setAttribute("capture","environment");fileRef.current.click()}} disabled=${imageLoading} style=${{flex:1,padding:"12px",borderRadius:10,background:"linear-gradient(135deg,#7c3aed,#5b21b6)",border:"none",color:"white",cursor:"pointer",fontSize:14,fontWeight:600}}>${"\uD83D\uDCF7"} Kamera</button>
+            <button onClick=${function(){fileRef.current.removeAttribute("capture");fileRef.current.click()}} disabled=${imageLoading} style=${{flex:1,padding:"12px",borderRadius:10,background:"rgba(124,58,237,0.3)",border:"1px solid rgba(124,58,237,0.4)",color:"#c4b5fd",cursor:"pointer",fontSize:14}}>${"\uD83D\uDCC1"} Velg bilde</button>
+          </div>
+          ${imageLoading&&html`<div style=${{textAlign:"center",color:"#a78bfa",fontSize:13,marginTop:10}}><span class="spinner" style=${{width:14,height:14}}></span> Analyserer etikett...</div>`}
+          ${aiQuestions&&html`<div style=${{marginTop:10,padding:12,background:"rgba(245,158,11,0.1)",border:"1px solid rgba(245,158,11,0.3)",borderRadius:10}}>
+            <div style=${{fontSize:12,color:"#f59e0b",fontWeight:600,marginBottom:6}}>AI trenger hjelp:</div>
+            ${aiQuestions.map(function(q,i){return html`<div key=${i} style=${{fontSize:13,color:"#f3e8ff",marginBottom:4}}>${q}</div>`})}
+            <div style=${{display:"flex",gap:8,marginTop:8}}>
+              <input placeholder="Skriv svar her..." value=${aiAnswer} onChange=${function(e){setAiAnswer(e.target.value)}} onKeyDown=${function(e){if(e.key==="Enter")submitAiAnswer()}} style=${{flex:1,padding:"8px 10px",borderRadius:8,border:"1px solid rgba(245,158,11,0.3)",background:"#1e1228",color:"#f3e8ff",fontSize:13}}/>
+              <button onClick=${submitAiAnswer} style=${{padding:"8px 14px",borderRadius:8,background:"rgba(245,158,11,0.3)",border:"1px solid rgba(245,158,11,0.4)",color:"#f59e0b",cursor:"pointer",fontSize:13}}>Svar</button>
+            </div>
+          </div>`}
+          ${imgPreview&&!imageLoading&&html`<div style=${{marginTop:10,textAlign:"center"}}><img src=${imgPreview} style=${{maxHeight:120,maxWidth:"100%",borderRadius:8,border:"1px solid #3a2a4a",objectFit:"contain"}}/></div>`}
+        </div>
+        <div style=${{marginBottom:16}}>
+          <div style=${{fontSize:11,color:"#a78bfa",marginBottom:4}}>ELLER SOK PA VINNAVN</div>
+          <div style=${{display:"flex",gap:8}}>
+            <input placeholder="f.eks. Barolo Riserva 2018" value=${searchQuery} onChange=${function(e){setSearchQuery(e.target.value)}} onKeyDown=${function(e){if(e.key==="Enter")doWineSearch()}} style=${Object.assign({},iS,{marginBottom:0,flex:1})}/>
+            <button onClick=${doWineSearch} disabled=${searchLoading} style=${{padding:"10px 14px",borderRadius:8,background:searchLoading?"#3a2a4a":"linear-gradient(135deg,#7c3aed,#5b21b6)",border:"none",color:"white",cursor:"pointer",fontSize:13}}>${searchLoading?"...":"Sok"}</button>
+          </div>
+        </div>
+        ${addStatus&&html`<div class="fade-in" style=${{padding:10,borderRadius:8,background:"rgba(167,139,250,0.1)",fontSize:13,marginBottom:12,textAlign:"center"}}>${addStatus}</div>`}
+        <div style=${{textAlign:"center",color:"#6b7280",fontSize:11,marginBottom:8}}>--- bekreft eller fyll inn manuelt ---</div>
+        ${inp("producer","Produsent",newWine,setNewWine)}
+        ${inp("name","Vinnavn / Cuvee *",newWine,setNewWine)}
+        <div style=${{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>${numI("vintage","Aargang *",newWine,setNewWine)}${numI("quantity","Antall",newWine,setNewWine)}</div>
+        ${inp("region","Region / Appellation",newWine,setNewWine)}
+        ${inp("subregion","Underdistrikt",newWine,setNewWine)}
+        ${inp("country","Land",newWine,setNewWine)}
+        ${inp("grape","Drue(r)",newWine,setNewWine)}
+        ${inp("classification","Klassifikasjon (Grand Cru, DOC...)",newWine,setNewWine)}
+        ${selI(newWine,setNewWine)}
+        <button onClick=${reAnalyzeWithCorrections} disabled=${imageLoading} style=${{width:"100%",padding:"10px",borderRadius:8,background:"rgba(52,211,153,0.15)",border:"1px solid rgba(52,211,153,0.3)",color:"#34d399",cursor:"pointer",fontSize:12,marginBottom:8}}>${imageLoading?"Oppdaterer...":"Har du endret noe? Trykk her for aa oppdatere resten med AI"}</button>
+        <div style=${{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>${numI("drink_from","Drikk fra (aar)",newWine,setNewWine)}${numI("drink_until","Drikk innen (aar)",newWine,setNewWine)}</div>
+        ${inp("temp","Serveringstemperatur",newWine,setNewWine)}
+        ${inp("decant","Dekantering",newWine,setNewWine)}
+        ${inp("notes","Smaksnotater",newWine,setNewWine)}
+        ${inp("food_pairing","Passer til (mat)",newWine,setNewWine)}
+        ${inp("price","Pris (NOK)",newWine,setNewWine)}
+        <div style=${{marginBottom:16,padding:14,background:"rgba(255,255,255,0.03)",border:"1px solid #2a1a3a",borderRadius:12}}>
+          <div style=${{fontSize:11,color:"#a78bfa",marginBottom:6}}>AI-VURDERING (0-100 poeng)</div>
+          <div style=${{display:"flex",alignItems:"center",gap:12}}>
+            <input type="number" min="0" max="100" placeholder="0-100" value=${newWine.rating||""} onChange=${function(e){setNewWine(function(p){return Object.assign({},p,{rating:e.target.value})})}} style=${Object.assign({},iS,{marginBottom:0,width:80,textAlign:"center",fontSize:18,fontWeight:700})}/>
+            <div style=${{fontSize:12,color:"#9ca3af"}}>${parseInt(newWine.rating)>=95?"Eksepsjonell":parseInt(newWine.rating)>=90?"Utmerket":parseInt(newWine.rating)>=85?"Veldig bra":parseInt(newWine.rating)>=80?"Bra":"Ikke vurdert"}</div>
+          </div>
+        </div>
+        <div style=${{display:"flex",gap:8,marginBottom:24}}>
+          <button onClick=${addWine} style=${{flex:2,padding:14,borderRadius:12,background:"linear-gradient(135deg,#7c3aed,#5b21b6)",border:"none",color:"white",fontSize:15,fontWeight:600,cursor:"pointer"}}>Legg til i kjelleren</button>
+          <button onClick=${function(){if(!newWine.name||!newWine.vintage){setAddStatus("Navn og aargang kreves.");return;}doAddWine("wishlist")}} style=${{flex:1,padding:14,borderRadius:12,background:"rgba(245,158,11,0.15)",border:"1px solid rgba(245,158,11,0.3)",color:"#f59e0b",fontSize:13,fontWeight:600,cursor:"pointer"}}>Oenskeliste</button>
+        </div>
+      </div>`}
+
+      ${tab===3&&html`<div>
+        <div style=${{fontSize:15,fontWeight:700,marginBottom:12}}>Del viner med venner</div>
+        ${shareStatus&&html`<div style=${{padding:10,borderRadius:8,background:"rgba(167,139,250,0.1)",fontSize:13,marginBottom:10,textAlign:"center"}}>${shareStatus}</div>`}
+        <div style=${{fontSize:11,color:"#a78bfa",marginBottom:4}}>HVA VIL DU DELE?</div>
+        <div style=${{display:"flex",gap:8,marginBottom:12}}>
+          <button onClick=${function(){setShareType("collection");setShareWineId(null)}} style=${{flex:1,padding:"10px",borderRadius:8,background:shareType==="collection"?"rgba(124,58,237,0.3)":"transparent",border:"1px solid "+(shareType==="collection"?"#7c3aed":"#3a2a4a"),color:shareType==="collection"?"#c4b5fd":"#9ca3af",cursor:"pointer",fontSize:13}}>Hele samlingen</button>
+          <button onClick=${function(){setShareType("wine")}} style=${{flex:1,padding:"10px",borderRadius:8,background:shareType==="wine"?"rgba(124,58,237,0.3)":"transparent",border:"1px solid "+(shareType==="wine"?"#7c3aed":"#3a2a4a"),color:shareType==="wine"?"#c4b5fd":"#9ca3af",cursor:"pointer",fontSize:13}}>Enkeltvin</button>
+        </div>
+        ${shareType==="wine"&&html`<div style=${{marginBottom:12}}>
+          <div style=${{fontSize:11,color:"#a78bfa",marginBottom:4}}>VELG VIN</div>
+          <select value=${shareWineId||""} onChange=${function(e){setShareWineId(e.target.value||null)}} style=${iS}>
+            <option value="">-- Velg en vin --</option>
+            ${wines.map(function(w){return html`<option key=${w.id} value=${w.id}>${w.producer?w.producer+" - ":""}${w.name} ${w.vintage}</option>`})}
+          </select>
+        </div>`}
+        <div style=${{fontSize:11,color:"#a78bfa",marginBottom:4}}>E-POST TIL MOTTAKER</div>
+        <input placeholder="venn@eksempel.no" value=${shareEmail} onChange=${function(e){setShareEmail(e.target.value)}} style=${iS}/>
+        <button onClick=${createShare} style=${{width:"100%",padding:12,borderRadius:10,background:"linear-gradient(135deg,#7c3aed,#5b21b6)",border:"none",color:"white",fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:16}}>${shareType==="wine"?"Del denne vinen":"Del hele samlingen"}</button>
+        ${shares.outgoing.length>0&&html`<div style=${{marginBottom:16}}>
+          <div style=${{fontSize:13,fontWeight:600,color:"#c4b5fd",marginBottom:8}}>Delt av deg</div>
+          ${shares.outgoing.map(function(sh){
+            var wineName="";
+            if(sh.share_type==="wine"&&sh.wine_id){var found=wines.find(function(w){return w.id===sh.wine_id});if(found)wineName=" ("+found.name+")";}
+            return html`<div key=${sh.id} style=${{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 12px",background:"rgba(255,255,255,0.04)",border:"1px solid #2a1a3a",borderRadius:8,marginBottom:4}}>
+              <div>
+                <div style=${{fontSize:13}}>${sh.invited_email}</div>
+                <div style=${{fontSize:11,color:"#6b7280"}}>${sh.share_type==="collection"?"Hele samlingen":"Enkeltvin"+wineName} - ${sh.status}</div>
+              </div>
+            </div>`
+          })}
+        </div>`}
+        ${shares.incoming.length>0&&html`<div>
+          <div style=${{fontSize:13,fontWeight:600,color:"#c4b5fd",marginBottom:8}}>Delt med deg</div>
+          ${shares.incoming.map(function(sh){return html`<div key=${sh.id} style=${{padding:"8px 12px",background:"rgba(255,255,255,0.04)",border:"1px solid #2a1a3a",borderRadius:8,marginBottom:4,fontSize:13}}>${sh.share_type==="collection"?"Hele samlingen":"Enkeltvin"} fra ${sh.invited_email||"en venn"}</div>`})}
+        </div>`}
+        ${shares.outgoing.length===0&&shares.incoming.length===0&&html`<div style=${{textAlign:"center",color:"#6b7280",padding:20,fontSize:13}}>Ingen delinger ennaa.</div>`}
+      </div>`}
+
+      ${tab===4&&html`<div>
+        <div style=${{textAlign:"center",marginBottom:20}}>
+          <div style=${{fontSize:48,marginBottom:8}}>${"\uD83D\uDC64"}</div>
+          <div style=${{fontSize:18,fontWeight:700}}>${profile?profile.display_name:"..."}</div>
+          <div style=${{color:"#a78bfa",fontSize:13}}>${session.user.email}</div>
+        </div>
+        <div style=${{padding:14,background:"rgba(255,255,255,0.03)",border:"1px solid #2a1a3a",borderRadius:12,marginBottom:16}}>
+          <div style=${{fontSize:13,fontWeight:600,marginBottom:8}}>Kjelleren din</div>
+          <div style=${{display:"flex",justifyContent:"center",marginBottom:12}}>
+            <div style=${{fontSize:36,fontWeight:700,color:"#a78bfa"}}>${totalBottles}</div>
+            <div style=${{color:"#9ca3af",fontSize:13,marginLeft:8,alignSelf:"flex-end",paddingBottom:4}}>flasker totalt</div>
+          </div>
+          <div style=${{fontSize:13,fontWeight:600,marginBottom:8}}>Fordeling</div>
+          <div style=${{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,fontSize:13}}>
+            ${TYPE_ORDER.filter(function(t){return typeCounts[t]}).map(function(t){return html`<div key=${t} style=${{padding:10,background:"rgba(255,255,255,0.04)",borderRadius:8,textAlign:"center",borderLeft:"3px solid "+(typeColors[t]||"#6b7280")}}>
+              <div style=${{fontSize:20,fontWeight:700,color:typeColors[t]||"#6b7280"}}>${typeCounts[t]}</div>
+              <div style=${{color:"#9ca3af",fontSize:11}}>${t}</div>
+            </div>`})}
+          </div>
+        </div>
+        <div style=${{padding:14,background:"rgba(255,255,255,0.03)",border:"1px solid #2a1a3a",borderRadius:12,marginBottom:16}}>
+          <div style=${{fontSize:13,fontWeight:600,marginBottom:8}}>Geografi</div>
+          <div style=${{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,fontSize:13}}>
+            <div style=${{padding:10,background:"rgba(124,58,237,0.1)",borderRadius:8,textAlign:"center"}}><div style=${{fontSize:24,fontWeight:700,color:"#a78bfa"}}>${statC}</div><div style=${{color:"#9ca3af",fontSize:11}}>Land</div></div>
+            <div style=${{padding:10,background:"rgba(124,58,237,0.1)",borderRadius:8,textAlign:"center"}}><div style=${{fontSize:24,fontWeight:700,color:"#a78bfa"}}>${statR}</div><div style=${{color:"#9ca3af",fontSize:11}}>Regioner</div></div>
+          </div>
+        </div>
+        <button onClick=${logout} style=${{width:"100%",padding:14,borderRadius:12,background:"rgba(248,113,113,0.1)",border:"1px solid rgba(248,113,113,0.27)",color:"#f87171",fontSize:15,fontWeight:600,cursor:"pointer"}}>Logg ut</button>
+      </div>`}
+    </div>
+  </div>`;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(html`<${App}/>`);
+</script>
+</body>
+</html>
