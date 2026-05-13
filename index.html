@@ -31,7 +31,7 @@ var useState = React.useState, useRef = React.useRef, useEffect = React.useEffec
 
 var SUPABASE_URL = "https://nufwiwdsosdhfhmxpukf.supabase.co";
 var SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im51Zndpd2Rzb3NkaGZobXhwdWtmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzczNjQyNTAsImV4cCI6MjA5Mjk0MDI1MH0.hC1sKsL9n47q2fudi9pISD55-Q4E4fkzv5Jkngc4X_s";
-var EDGE_FN_URL = SUPABASE_URL + "/functions/v1/ai-sommelier";
+var EDGE_FN_URL = SUPABASE_URL + "/functions/v1/super-endpoint";
 var sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
     persistSession: true,
