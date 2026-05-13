@@ -31,7 +31,7 @@ var useState = React.useState, useRef = React.useRef, useEffect = React.useEffec
 
 var SUPABASE_URL = "https://nufwiwdsosdhfhmxpukf.supabase.co";
 var SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im51Zndpd2Rzb3NkaGZobXhwdWtmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzczNjQyNTAsImV4cCI6MjA5Mjk0MDI1MH0.hC1sKsL9n47q2fudi9pISD55-Q4E4fkzv5Jkngc4X_s";
-var ANTHROPIC_KEY = "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";
+var EDGE_FN_URL = SUPABASE_URL + "/functions/v1/ai-sommelier";
 var sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
     persistSession: true,
@@ -71,12 +71,14 @@ function groupWines(wines){
 }
 
 async function callClaude(sys,msgs,mt){
-  if(!ANTHROPIC_KEY) return null;
-  var r=await fetch("https://api.anthropic.com/v1/messages",{
-    method:"POST",headers:{"Content-Type":"application/json","x-api-key":ANTHROPIC_KEY,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-    body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:mt||500,system:sys,messages:msgs})
+  var r=await fetch(EDGE_FN_URL,{
+    method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+SUPABASE_ANON_KEY},
+    body:JSON.stringify({system:sys,messages:msgs,max_tokens:mt||500})
   });
-  var d=await r.json();return d.content[0].text;
+  if(!r.ok) throw new Error("Edge function feil: "+r.status);
+  var d=await r.json();
+  if(d.error) throw new Error(d.error);
+  return d.content[0].text;
 }
 
 function AuthScreen(props){
@@ -248,7 +250,7 @@ function WineApp(props){
       var userText="Identifiser vinen paa bildet. Returner KUN gyldig JSON. Hvis usikker paa type (roed/hvit) eller aargang mangler, inkluder questions-felt.";
       if(extraContext) userText+="\n\nBrukeren svarte: "+extraContext;
       var msgContent=base64?[{type:"image",source:{type:"base64",media_type:mimeType,data:base64}},{type:"text",text:userText}]:userText;
-      var r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":ANTHROPIC_KEY,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1500,system:AI_WINE_PROMPT,messages:[{role:"user",content:msgContent}]})});
+      var r=await fetch(EDGE_FN_URL,{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+SUPABASE_ANON_KEY},body:JSON.stringify({system:AI_WINE_PROMPT,messages:[{role:"user",content:msgContent}],max_tokens:1500})});
       if(!r.ok){setAddStatus("API-feil: "+r.status);setImageLoading(false);return;}
       var d=await r.json();
       if(!d.content||!d.content[0]){setAddStatus("Tomt svar fra AI.");setImageLoading(false);return;}
