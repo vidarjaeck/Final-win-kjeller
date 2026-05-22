@@ -559,8 +559,8 @@ function WineApp(props){
       var ty=w.type||"Annet",re=w.region||"Ukjent";
       if(!ratingsByType[ty])ratingsByType[ty]={sum:0,count:0};
       if(!ratingsByRegion[re])ratingsByRegion[re]={sum:0,count:0};
-      ratingsByType[ty].sum+=rt;ratingsByType[ty].count+=1;
-      ratingsByRegion[re].sum+=rt;ratingsByRegion[re].count+=1;
+      ratingsByType[ty].sum+=rt*qty;ratingsByType[ty].count+=qty;
+      ratingsByRegion[re].sum+=rt*qty;ratingsByRegion[re].count+=qty;
     }
     var producer=w.producer||"Ukjent";
     producerCounts[producer]=(producerCounts[producer]||0)+qty;
@@ -569,6 +569,11 @@ function WineApp(props){
       pricesByVintage[v].sum+=price;pricesByVintage[v].count+=1;
     }
   });
+  function ratingBarWidth(rating){
+    var scaled=((rating-80)/20)*100;
+    if(!isFinite(scaled))return 0;
+    return Math.max(4,Math.min(100,scaled));
+  }
   var avgTypeRows=Object.keys(ratingsByType).map(function(k){return{key:k,val:Math.round((ratingsByType[k].sum/ratingsByType[k].count)*10)/10}}).sort(function(a,b){return b.val-a.val});
   var avgRegionRows=Object.keys(ratingsByRegion).map(function(k){return{key:k,val:Math.round((ratingsByRegion[k].sum/ratingsByRegion[k].count)*10)/10}}).sort(function(a,b){return b.val-a.val}).slice(0,5);
   var producerRows=Object.keys(producerCounts).map(function(k){return{key:k,val:producerCounts[k]}}).sort(function(a,b){return b.val-a.val}).slice(0,5);
@@ -894,7 +899,7 @@ function WineApp(props){
           <div style=${{fontSize:13,fontWeight:600,marginBottom:8}}>Gjennomsnittlig rating (type)</div>
           ${avgTypeRows.length===0?html`<div style=${{fontSize:12,color:"#6b7280"}}>Ingen ratingdata ennå.</div>`:avgTypeRows.map(function(r){return html`<div key=${r.key} style=${{marginBottom:6}}>
             <div style=${{display:"flex",justifyContent:"space-between",fontSize:12}}><span>${r.key}</span><span style=${{color:"#a78bfa"}}>${r.val}</span></div>
-            <div style=${{height:6,background:"#1e1228",borderRadius:999}}><div style=${{height:"100%",width:Math.max(4,Math.min(100,r.val))+"%",background:"#a78bfa",borderRadius:999}}></div></div>
+            <div style=${{height:6,background:"#1e1228",borderRadius:999}}><div style=${{height:"100%",width:ratingBarWidth(r.val)+"%",background:"#a78bfa",borderRadius:999}}></div></div>
           </div>`})}
           <div style=${{fontSize:13,fontWeight:600,marginTop:10,marginBottom:8}}>Topp regioner (rating)</div>
           ${avgRegionRows.map(function(r){return html`<div key=${r.key} style=${{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:4}}><span style=${{color:"#9ca3af"}}>${r.key}</span><span>${r.val}</span></div>`})}
