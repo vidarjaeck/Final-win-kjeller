@@ -734,7 +734,7 @@ function WineApp(props){
           <button onClick=${function(){setShowWishlist(false);setShowFavorites(true)}} style=${{flex:1,padding:"8px",borderRadius:8,background:showFavorites?"rgba(251,191,36,0.2)":"transparent",border:"1px solid "+(showFavorites?"rgba(251,191,36,0.4)":"#3a2a4a"),color:showFavorites?"#fbbf24":"#6b7280",cursor:"pointer",fontSize:12,fontWeight:showFavorites?600:400}}>Favoritter (${favoriteWines.length})</button>
         </div>
         <div style=${{display:"flex",gap:6,marginBottom:10,alignItems:"center"}}>
-          <input value=${advancedSearch} onChange=${function(e){setAdvancedSearch(e.target.value)}} placeholder=${"Søk vin, produsent..."+(activeFilter!=="all"?" \u2022 "+FILTER_OPTIONS.find(function(o){return o.key===activeFilter}).label:"")} style=${Object.assign({},iS,{marginBottom:0,flex:1})}/>
+          <input value=${advancedSearch} onChange=${function(e){setAdvancedSearch(e.target.value)}} placeholder=${"Søk vin, produsent..."+(activeFilter!=="all"?(function(){var fo=FILTER_OPTIONS.find(function(o){return o.key===activeFilter});return fo?" \u2022 "+fo.label:"";})():"")} style=${Object.assign({},iS,{marginBottom:0,flex:1})}/>
           <button onClick=${function(){setShowFilterPanel(true)}} style=${{padding:"10px 14px",borderRadius:8,background:activeFilterCount>0?"rgba(124,58,237,0.4)":"rgba(124,58,237,0.2)",border:"1px solid "+(activeFilterCount>0?"#7c3aed":"rgba(124,58,237,0.35)"),color:"#c4b5fd",cursor:"pointer",fontSize:13,whiteSpace:"nowrap"}}>${"⚙ Filter"+(activeFilterCount>0?" ("+activeFilterCount+")":"")}</button>
         </div>
         ${loadingDb?html`<div style=${{textAlign:"center",padding:40,color:"#a78bfa"}}>Laster kjelleren...</div>`:html`<div>
