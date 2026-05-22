@@ -89,10 +89,10 @@ function buildNotifications(wines){
   var out=[];
   wines.forEach(function(w){
     var st=drinkWindowStatus(w);
-    if(st.label==="Prime") out.push({wineId:w.id,color:"#a78bfa",text:(w.name||"Ukjent vin")+" er naa i PRIME-status."});
-    if(st.label==="Klar"||st.label==="Drink naa") out.push({wineId:w.id,color:"#34d399",text:(w.name||"Ukjent vin")+" er klar til drikking."});
+    if(st.label==="Prime") out.push({wineId:w.id,color:"#a78bfa",text:(w.name||"Ukjent vin")+" er nå i PRIME-status."});
+    if(st.label==="Klar"||st.label==="Drink nå") out.push({wineId:w.id,color:"#34d399",text:(w.name||"Ukjent vin")+" er klar til drikking."});
     var until=parseInt(w.drink_until);
-    if(until&&until>=currentYear&&until<=currentYear+1) out.push({wineId:w.id,color:"#fb923c",text:(w.name||"Ukjent vin")+" gaar snart ut av drikkevindu ("+until+")."});
+    if(until&&until>=currentYear&&until<=currentYear+1) out.push({wineId:w.id,color:"#fb923c",text:(w.name||"Ukjent vin")+" går snart ut av drikkevindu ("+until+")."});
   });
   return out.slice(0,8);
 }
@@ -105,7 +105,7 @@ function drinkWindowStatus(w){
   var pct=(currentYear-f)/(u-f);
   if(pct<0.4) return {label:"Klar",color:"#34d399"};
   if(pct<0.75) return {label:"Prime",color:"#a78bfa"};
-  return {label:"Drink naa",color:"#fb923c"};
+  return {label:"Drink nå",color:"#fb923c"};
 }
 
 function groupWines(wines){
@@ -528,7 +528,7 @@ function WineApp(props){
   var baseFiltered=showFavorites?favoriteWines:showWishlist?wishlistWines:cellarWines.filter(function(w){
     if(activeFilter==="all")return true;
     var st=drinkWindowStatus(w);
-    if(activeFilter==="drink_now")return st.label==="Drink naa";
+    if(activeFilter==="drink_now")return st.label==="Drink nå";
     if(activeFilter==="prime")return st.label==="Prime";
     if(activeFilter==="ready")return st.label==="Klar";
     if(activeFilter==="young")return st.label==="For ung";
@@ -707,7 +707,7 @@ function WineApp(props){
           ${FILTER_OPTIONS.map(function(f){var isActive=activeFilter===f.key;return html`<button key=${f.key} onClick=${function(){setActiveFilter(f.key)}} style=${{padding:"5px 10px",borderRadius:16,background:isActive?(f.color||"#7c3aed")+"22":"transparent",border:"1px solid "+(isActive?(f.color||"#7c3aed")+"66":"#2a1a3a"),color:isActive?(f.color||"#c4b5fd"):"#6b7280",cursor:"pointer",fontSize:11,whiteSpace:"nowrap",fontWeight:isActive?600:400}}>${f.label}</button>`})}
         </div>`}
         ${loadingDb?html`<div style=${{textAlign:"center",padding:40,color:"#a78bfa"}}>Laster kjelleren...</div>`:html`<div>
-          ${filteredWines.length===0&&html`<div style=${{textAlign:"center",color:"#6b7280",padding:40}}>${showWishlist?"Oenskelisten er tom.":showFavorites?"Ingen favoritter enda.":activeFilter!=="all"?"Ingen viner med denne statusen.":"Ingen viner ennaa."}</div>`}
+          ${filteredWines.length===0&&html`<div style=${{textAlign:"center",color:"#6b7280",padding:40}}>${showWishlist?"Oenskelisten er tom.":showFavorites?"Ingen favoritter enda.":activeFilter!=="all"?"Ingen viner med denne statusen.":"Ingen viner ennå."}</div>`}
           ${TYPE_ORDER.filter(function(ty){return grouped[ty]}).map(function(type){
             var tk="t_"+type;
             var allW=[];Object.keys(grouped[type]).forEach(function(c){Object.keys(grouped[type][c]).forEach(function(r){Object.keys(grouped[type][c][r]).forEach(function(s){allW=allW.concat(grouped[type][c][r][s])})})});
@@ -743,7 +743,7 @@ function WineApp(props){
       </div>`}
 
       ${tab===1&&html`<div style=${{display:"flex",flexDirection:"column",height:"calc(100vh - 200px)"}}>
-        <div style=${{display:"flex",justifyContent:"flex-end",marginBottom:8}}><button onClick=${clearChat} style=${{padding:"4px 10px",borderRadius:12,background:"transparent",border:"1px solid #3a2a4a",color:"#6b7280",fontSize:11,cursor:"pointer"}}>Toom chat</button></div>
+        <div style=${{display:"flex",justifyContent:"flex-end",marginBottom:8}}><button onClick=${clearChat} style=${{padding:"4px 10px",borderRadius:12,background:"transparent",border:"1px solid #3a2a4a",color:"#6b7280",fontSize:11,cursor:"pointer"}}>Tøm chat</button></div>
         <div style=${{padding:10,borderRadius:10,background:"rgba(52,211,153,0.09)",border:"1px solid rgba(52,211,153,0.2)",marginBottom:8}}>
           <div style=${{fontSize:11,color:"#34d399",marginBottom:6,fontWeight:600}}>Matlogg til AI-sommelier</div>
           <div style=${{display:"flex",gap:6}}>
