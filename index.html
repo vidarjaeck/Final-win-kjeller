@@ -145,7 +145,7 @@ function AuthScreen(props){
     try{
       if(mode==="login"){var d=await sb.auth.signInWithPassword({email:email,password:password});if(d.error)throw d.error;props.onAuth(d.data.session);}
       else if(mode==="signup"){var d2=await sb.auth.signUp({email:email,password:password,options:{data:{display_name:displayName||email.split("@")[0]}}});if(d2.error)throw d2.error;setMsg("Konto opprettet! Logg inn.");setMsgType("success");}
-      else{var d3=await sb.auth.resetPasswordForEmail(email);if(d3.error)throw d3.error;setMsg("Lenke sendt til "+email);setMsgType("success");}
+      else{var d3=await sb.auth.resetPasswordForEmail(email,{redirectTo:window.location.origin+window.location.pathname});if(d3.error)throw d3.error;setMsg("Lenke sendt til "+email+". Sjekk innboksen (og spam).");setMsgType("success");}
     }catch(err){setMsg(err.message||"Noe gikk galt");setMsgType("error");}
     setLoading(false);
   }
@@ -175,15 +175,67 @@ function AuthScreen(props){
   </div>`;
 }
 
+function ResetPasswordScreen(props){
+  var s1=useState(""),pw=s1[0],setPw=s1[1];
+  var s2=useState(""),pw2=s2[0],setPw2=s2[1];
+  var s3=useState(false),loading=s3[0],setLoading=s3[1];
+  var s4=useState(""),msg=s4[0],setMsg=s4[1];
+  var s5=useState("info"),msgType=s5[0],setMsgType=s5[1];
+  var s6=useState(false),done=s6[0],setDone=s6[1];
+  var iS={width:"100%",padding:"12px 14px",borderRadius:10,border:"1px solid #3a2a4a",background:"#1e1228",color:"#f3e8ff",fontSize:14,marginBottom:10};
+
+  async function handleSubmit(e){
+    e.preventDefault();setMsg("");
+    if(pw.length<6){setMsg("Passordet må være minst 6 tegn");setMsgType("error");return;}
+    if(pw!==pw2){setMsg("Passordene er ikke like");setMsgType("error");return;}
+    setLoading(true);
+    try{
+      var d=await sb.auth.updateUser({password:pw});
+      if(d.error)throw d.error;
+      setDone(true);setMsg("Passord oppdatert! Du kan nå logge inn.");setMsgType("success");
+      try{await sb.auth.signOut();}catch(_){}
+    }catch(err){setMsg(err.message||"Kunne ikke oppdatere passord");setMsgType("error");}
+    setLoading(false);
+  }
+
+  function backToLogin(){
+    try{window.history.replaceState(null,"",window.location.pathname);}catch(_){}
+    props.onDone();
+  }
+
+  return html`<div style=${{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+    <div class="fade-in" style=${{width:"100%",maxWidth:400,background:"rgba(255,255,255,0.03)",border:"1px solid #2a1a3a",borderRadius:20,padding:30}}>
+      <div style=${{textAlign:"center",marginBottom:24}}>
+        <div style=${{fontSize:48,marginBottom:8}}>${"\uD83D\uDD11"}</div>
+        <div style=${{fontSize:24,fontWeight:700}}>Velg nytt passord</div>
+        <div style=${{color:"#a78bfa",fontSize:13,marginTop:4}}>Skriv inn et nytt passord for kontoen din</div>
+      </div>
+      ${msg&&html`<div class="fade-in" style=${{padding:"10px 14px",borderRadius:10,background:msgType==="success"?"rgba(52,211,153,0.15)":"rgba(248,113,113,0.15)",fontSize:13,textAlign:"center",marginBottom:10,color:msgType==="success"?"#34d399":"#f87171"}}>${msg}</div>`}
+      ${!done?html`<form onSubmit=${handleSubmit}>
+        <input type="password" placeholder="Nytt passord (min 6 tegn)" value=${pw} onChange=${function(e){setPw(e.target.value)}} required minLength=6 style=${iS}/>
+        <input type="password" placeholder="Gjenta nytt passord" value=${pw2} onChange=${function(e){setPw2(e.target.value)}} required minLength=6 style=${iS}/>
+        <button type="submit" disabled=${loading} style=${{width:"100%",padding:"14px",borderRadius:12,background:loading?"#3a2a4a":"linear-gradient(135deg,#7c3aed,#5b21b6)",border:"none",color:"white",fontSize:15,fontWeight:600,cursor:"pointer",marginTop:4}}>
+          ${loading?"...":"Lagre nytt passord"}
+        </button>
+      </form>`:html`<button onClick=${backToLogin} style=${{width:"100%",padding:"14px",borderRadius:12,background:"linear-gradient(135deg,#7c3aed,#5b21b6)",border:"none",color:"white",fontSize:15,fontWeight:600,cursor:"pointer",marginTop:4}}>Til innlogging</button>`}
+    </div>
+  </div>`;
+}
+
 function App(){
   var s1=useState(null),session=s1[0],setSession=s1[1];
   var s2=useState(true),loading=s2[0],setLoading=s2[1];
+  var s3=useState(function(){var h=window.location.hash||"";return h.indexOf("type=recovery")!==-1;}),recovering=s3[0],setRecovering=s3[1];
   useEffect(function(){
     sb.auth.getSession().then(function(r){setSession(r.data.session);setLoading(false);});
-    var sub=sb.auth.onAuthStateChange(function(_,sess){setSession(sess)});
+    var sub=sb.auth.onAuthStateChange(function(evt,sess){
+      if(evt==="PASSWORD_RECOVERY"){setRecovering(true);setSession(sess);return;}
+      setSession(sess);
+    });
     return function(){sub.data.subscription.unsubscribe()};
   },[]);
   if(loading) return html`<div style=${{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center"}}><div class="spinner" style=${{width:32,height:32}}></div></div>`;
+  if(recovering) return html`<${ResetPasswordScreen} onDone=${function(){setRecovering(false);setSession(null);}}/>`;
   if(!session) return html`<${AuthScreen} onAuth=${setSession}/>`;
   return html`<${WineApp} session=${session}/>`;
 }
