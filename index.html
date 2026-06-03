@@ -355,6 +355,12 @@ function WineApp(props){
     await sb.from("wines").delete().eq("id",wine.id);
     setWines(function(p){return p.filter(function(w){return w.id!==wine.id})});setSelectedWine(null);
   }
+  function discardScan(){
+    setNewWine(Object.assign({},emptyWine));setImgPreview(null);setLastImageData("");
+    setPendingImageBase64(null);setPendingImageType(null);
+    setAiQuestions(null);setAiAnswer("");setAddStatus("");
+    setSearchQuery("");
+  }
   function toggleFavoriteWine(wineId){
     var id=String(wineId);
     setFavoriteWineIds(function(prev){return prev.indexOf(id)>=0?prev.filter(function(v){return v!==id}):prev.concat([id])});
@@ -708,6 +714,7 @@ function WineApp(props){
       </div>
       <div style=${{display:"flex",flexDirection:"column",gap:8}}>
         <button onClick=${mergeWithExisting} style=${{width:"100%",padding:14,borderRadius:12,background:"linear-gradient(135deg,#7c3aed,#5b21b6)",border:"none",color:"white",fontSize:15,fontWeight:600,cursor:"pointer"}}>Oppdater beholdning (+${parseInt(newWine.quantity)||1})</button>
+        <button onClick=${function(){var dw=duplicateWine;setDuplicateWine(null);discardScan();setTab(0);setShowWishlist(false);setShowFavorites(false);setActiveFilter("all");setSelectedWine(dw);if(!dw.image_data)loadWineImage(dw.id);}} style=${{width:"100%",padding:12,borderRadius:12,background:"rgba(59,130,246,0.15)",border:"1px solid rgba(59,130,246,0.3)",color:"#60a5fa",fontSize:13,cursor:"pointer"}}>Vis eksisterende vin</button>
         <button onClick=${doAddWine} style=${{width:"100%",padding:12,borderRadius:12,background:"rgba(255,255,255,0.04)",border:"1px solid #3a2a4a",color:"#c4b5fd",fontSize:13,cursor:"pointer"}}>Legg til som ny vin likevel</button>
         <button onClick=${function(){setDuplicateWine(null)}} style=${{width:"100%",padding:12,borderRadius:12,background:"transparent",border:"none",color:"#6b7280",fontSize:13,cursor:"pointer"}}>Avbryt</button>
       </div>
@@ -851,7 +858,10 @@ function WineApp(props){
           </div>
           ${imageLoading&&html`<div style=${{textAlign:"center",color:"#a78bfa",fontSize:13,marginTop:10}}><span class="spinner" style=${{width:14,height:14}}></span> Analyserer etikett...</div>`}
           ${aiQuestions&&html`<div style=${{marginTop:10,padding:12,background:"rgba(245,158,11,0.1)",border:"1px solid rgba(245,158,11,0.3)",borderRadius:10}}>
-            <div style=${{fontSize:12,color:"#f59e0b",fontWeight:600,marginBottom:6}}>AI trenger hjelp:</div>
+            <div style=${{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+              <div style=${{fontSize:12,color:"#f59e0b",fontWeight:600}}>AI trenger hjelp:</div>
+              <button onClick=${function(){setAiQuestions(null);setAiAnswer("");setPendingImageBase64(null);setPendingImageType(null);setAddStatus("");setImageLoading(false)}} style=${{background:"none",border:"none",color:"#f87171",fontSize:12,cursor:"pointer",padding:"2px 6px"}}>Avbryt ✕</button>
+            </div>
             ${aiQuestions.map(function(q,i){return html`<div key=${i} style=${{fontSize:13,color:"#f3e8ff",marginBottom:4}}>${q}</div>`})}
             <div style=${{display:"flex",gap:8,marginTop:8}}>
               <input placeholder="Skriv svar her..." value=${aiAnswer} onChange=${function(e){setAiAnswer(e.target.value)}} onKeyDown=${function(e){if(e.key==="Enter")submitAiAnswer()}} style=${{flex:1,padding:"8px 10px",borderRadius:8,border:"1px solid rgba(245,158,11,0.3)",background:"#1e1228",color:"#f3e8ff",fontSize:13}}/>
@@ -896,6 +906,7 @@ function WineApp(props){
           <button onClick=${addWine} style=${{flex:2,padding:14,borderRadius:12,background:"linear-gradient(135deg,#7c3aed,#5b21b6)",border:"none",color:"white",fontSize:15,fontWeight:600,cursor:"pointer"}}>Legg til i kjelleren</button>
           <button onClick=${function(){if(!newWine.name||!newWine.vintage){setAddStatus("Navn og aargang kreves.");return;}doAddWine("wishlist")}} style=${{flex:1,padding:14,borderRadius:12,background:"rgba(245,158,11,0.15)",border:"1px solid rgba(245,158,11,0.3)",color:"#f59e0b",fontSize:13,fontWeight:600,cursor:"pointer"}}>Oenskeliste</button>
         </div>
+        ${(newWine.name||imgPreview||addStatus)&&html`<button onClick=${discardScan} style=${{width:"100%",padding:10,borderRadius:10,background:"transparent",border:"1px solid rgba(248,113,113,0.3)",color:"#f87171",fontSize:13,cursor:"pointer"}}>Forkast skanning ✕</button>`}
       </div>`}
 
       ${tab===3&&html`<div>
