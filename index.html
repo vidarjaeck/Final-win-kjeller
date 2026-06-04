@@ -278,6 +278,7 @@ function WineApp(props){
   var s36=useState(false),showFavorites=s36[0],setShowFavorites=s36[1];
   var s37=useState([]),favoriteWineIds=s37[0],setFavoriteWineIds=s37[1];
   var s38=useState([]),notifications=s38[0],setNotifications=s38[1];
+  var s39=useState("dashboard"),cellarView=s39[0],setCellarView=s39[1];
   var s41=useState(null),imageTargetWineId=s41[0],setImageTargetWineId=s41[1];
   var s19=useState(false),imageLoading=s19[0],setImageLoading=s19[1];
   var s20=useState(null),imgPreview=s20[0],setImgPreview=s20[1];
@@ -314,7 +315,7 @@ function WineApp(props){
   async function loadWines(){
     setLoadingDb(true);
     try{
-      var r=await sb.from("wines").select("id,owner_id,producer,name,vintage,region,subregion,country,grape,type,classification,quantity,drink_from,drink_until,temp,decant,notes,food_pairing,rating,status,price,price_source,created_at,updated_at").eq("owner_id",userId).order("created_at",{ascending:false});
+      var r=await sb.from("wines").select("id,owner_id,producer,name,vintage,region,subregion,country,grape,type,classification,quantity,drink_from,drink_until,temp,decant,notes,food_pairing,rating,status,price,price_source,created_at,updated_at").eq("owner_id",userId).order("created_at",{ascending:false}).limit(500);
       if(r.error){console.error("loadWines error:",r.error);setAddStatus("DB-feil: "+r.error.message);setLoadingDb(false);return;}
       console.log("Loaded wines:",r.data?r.data.length:0);
       setWines(r.data||[]);
@@ -527,8 +528,20 @@ function WineApp(props){
     try{
       await sb.from("chat_history").insert({user_id:userId,role:"user",content:userMsg});
       var cellar=wines.filter(function(w){return w.status!=="wishlist"});
-      var wl=cellar.map(function(w){var st=drinkWindowStatus(w);return"- "+(w.producer?w.producer+" ":"")+w.name+" "+w.vintage+" | "+w.type+" | "+w.grape+" | "+w.region+" | "+(w.rating||0)+"p | "+st.label+" | x"+w.quantity+(w.food_pairing?" | Passer til: "+w.food_pairing:"")}).join("\n");
-      var reply=await callClaude("Du er en entusiastisk og kunnskapsrik AI-sommelier. Snakk alltid norsk.\n\nBrukerens vinkjeller:\n"+(wl||"Tom kjeller.")+"\n\nRegler:\n- Anbefal ALLTID fra kjelleren foerst naar brukeren spoer om vin til mat\n- Naar du nevner en vin fra kjelleren, skriv vinnavnet i klammer slik: [Produsent Vinnavn Aargang] saa brukeren kan klikke paa den\n- Gi BAADE en premium-anbefaling (beste vin fra kjelleren) OG en budsjett-anbefaling (rimeligste/enkleste som fortsatt passer)\n- Forklar hvorfor vinen passer (drue, region, smaksprofil)\n- Nevn drikkevindu-status og poeng\n- Hvis ingen vin i kjelleren passer, foreslaa hva brukeren burde kjope med estimert pris\n- Gi gjerne oppskrifter naar du anbefaler vin til mat\n- Vaer poetisk og entusiastisk om vin",messages.concat([{role:"user",content:userMsg}]).slice(-20),2200);
+      // Smart utvalg: prioriter drikkeklare, deretter rating, gi mangfold
+      function isReady(w){var st=drinkWindowStatus(w);return st.label==="Prime"||st.label==="Klar"||st.label==="Drink nå";}
+      var ready=cellar.filter(function(w){return isReady(w)}).sort(function(a,b){return(b.rating||0)-(a.rating||0)});
+      var notReady=cellar.filter(function(w){return !isReady(w)}).sort(function(a,b){return(b.rating||0)-(a.rating||0)});
+      // Ta ALLE drikkeklare + de beste ikke-drikkeklare, opptil 40 totalt
+      var smartList=ready.concat(notReady).slice(0,40);
+      // Bygg rik kontekst med prisinfo
+      var wl=smartList.map(function(w){
+        var st=drinkWindowStatus(w);
+        var price=parsePriceValue(w.price);
+        var priceLabel=price!==null?"kr "+Math.round(price):"ukjent pris";
+        return "- "+(w.producer?w.producer+" ":"")+w.name+" "+w.vintage+" | "+w.type+" | "+w.grape+" | "+w.region+" | "+(w.rating||0)+"p | "+st.label+" | x"+w.quantity+" | "+priceLabel+(w.food_pairing?" | Passer: "+w.food_pairing:"");
+      }).join("\n");
+      var reply=await callClaude("Du er en entusiastisk og kunnskapsrik AI-sommelier. Snakk alltid norsk.\n\nBrukerens vinkjeller:\n"+(wl||"Tom kjeller.")+"\n\nRegler:\n- Anbefal ALLTID fra kjelleren foerst naar brukeren spoer om vin til mat\n- Naar du nevner en vin fra kjelleren, skriv vinnavnet i klammer slik: [Produsent Vinnavn Aargang] saa brukeren kan klikke paa den\n- Gi ALLTID 3 anbefalinger i ulike prisklasser:\n  1) EN PREMIUM (dyreste/beste, 400+ kr)\n  2) EN MELLOMKLASSE (200-400 kr)\n  3) EN BUDSJETT (under 200 kr)\n- Prioriter DRIKKEKLARE viner (Prime/Klar/Drink nå) over viner som fortsatt boer lagres\n- Forklar hvorfor vinen passer (drue, region, smaksprofil)\n- Nevn alltid drikkevindusstatus og poeng + pris\n- Hvis ingen vin i kjelleren passer, foreslaa hva brukeren burde kjope med estimert pris\n- Gi gjerne oppskrifter naar du anbefaler vin til mat\n- Vaer poetisk og entusiastisk om vin",messages.concat([{role:"user",content:userMsg}]).slice(-20),2500);
       var rt=reply||"Beklager, AI er ikke konfigurert.";
       setMessages(function(p){return p.concat([{role:"assistant",content:rt}])});
       await sb.from("chat_history").insert({user_id:userId,role:"assistant",content:rt});
@@ -778,58 +791,156 @@ function WineApp(props){
         </div>
       </div>
     </div>
-    ${notifications.length>0&&!collapsed.notifications&&html`<div style=${{padding:"8px 14px",borderBottom:"1px solid #2a1a3a",background:"rgba(245,158,11,0.08)"}}>
-      ${notifications.slice(0,3).map(function(n,i){return html`<div key=${i} onClick=${function(){var w=wines.find(function(v){return v.id===n.wineId});if(w){setTab(0);setShowWishlist(false);setShowFavorites(false);setSelectedWine(w);}}} style=${{fontSize:12,color:n.color,marginBottom:i===2?0:4,cursor:"pointer"}}>${n.text}</div>`})}
-    </div>`}
     <div style=${{display:"flex",borderBottom:"1px solid #2a1a3a",background:"rgba(0,0,0,0.2)"}}>
-      ${["Kjeller","Sommelier","Legg til","Deling","Profil"].map(function(t,i){return html`<button key=${i} onClick=${function(){setTab(i)}} style=${{flex:1,padding:"12px 0",background:"none",border:"none",color:tab===i?"#a78bfa":"#9ca3af",fontWeight:tab===i?700:400,borderBottom:tab===i?"2px solid #a78bfa":"2px solid transparent",cursor:"pointer",fontSize:12}}>${t}</button>`})}
+      ${["Kjeller","Sommelier","Legg til","Deling","Profil"].map(function(t,i){return html`<button key=${i} onClick=${function(){setTab(i);setSelectedWine(null);setCellarView("dashboard")}} style=${{flex:1,padding:"12px 0",background:"none",border:"none",color:tab===i?"#a78bfa":"#9ca3af",fontWeight:tab===i?700:400,borderBottom:tab===i?"2px solid #a78bfa":"2px solid transparent",cursor:"pointer",fontSize:12}}>${t}</button>`})}
     </div>
     <div style=${{flex:1,overflowY:"auto",padding:16}}>
 
       ${tab===0&&html`<div>
-        <div style=${{display:"flex",gap:6,marginBottom:10}}>
-          <button onClick=${function(){setShowWishlist(false);setShowFavorites(false);setActiveFilter("all")}} style=${{flex:1,padding:"8px",borderRadius:8,background:!showWishlist&&!showFavorites?"rgba(124,58,237,0.3)":"transparent",border:"1px solid "+(!showWishlist&&!showFavorites?"#7c3aed":"#3a2a4a"),color:!showWishlist&&!showFavorites?"#c4b5fd":"#6b7280",cursor:"pointer",fontSize:12,fontWeight:!showWishlist&&!showFavorites?600:400}}>Kjeller (${cellarWines.length})</button>
-          <button onClick=${function(){setShowWishlist(true);setShowFavorites(false)}} style=${{flex:1,padding:"8px",borderRadius:8,background:showWishlist?"rgba(245,158,11,0.2)":"transparent",border:"1px solid "+(showWishlist?"rgba(245,158,11,0.4)":"#3a2a4a"),color:showWishlist?"#f59e0b":"#6b7280",cursor:"pointer",fontSize:12,fontWeight:showWishlist?600:400}}>Oenskeliste (${wishlistWines.length})</button>
-          <button onClick=${function(){setShowWishlist(false);setShowFavorites(true)}} style=${{flex:1,padding:"8px",borderRadius:8,background:showFavorites?"rgba(251,191,36,0.2)":"transparent",border:"1px solid "+(showFavorites?"rgba(251,191,36,0.4)":"#3a2a4a"),color:showFavorites?"#fbbf24":"#6b7280",cursor:"pointer",fontSize:12,fontWeight:showFavorites?600:400}}>Favoritter (${favoriteWines.length})</button>
-        </div>
-        <div style=${{display:"flex",gap:6,marginBottom:10,alignItems:"center"}}>
-          <input value=${advancedSearch} onChange=${function(e){setAdvancedSearch(e.target.value)}} placeholder=${"Søk vin, produsent..."+(activeFilter!=="all"?(function(){var fo=FILTER_OPTIONS.find(function(o){return o.key===activeFilter});return fo?" \u2022 "+fo.label:"";})():"")} style=${Object.assign({},iS,{marginBottom:0,flex:1})}/>
-          <button onClick=${function(){setShowFilterPanel(true)}} style=${{padding:"10px 14px",borderRadius:8,background:activeFilterCount>0?"rgba(124,58,237,0.4)":"rgba(124,58,237,0.2)",border:"1px solid "+(activeFilterCount>0?"#7c3aed":"rgba(124,58,237,0.35)"),color:"#c4b5fd",cursor:"pointer",fontSize:13,whiteSpace:"nowrap"}}>${"⚙ Filter"+(activeFilterCount>0?" ("+activeFilterCount+")":"")}</button>
-        </div>
-        ${loadingDb?html`<div style=${{textAlign:"center",padding:40,color:"#a78bfa"}}>Laster kjelleren...</div>`:html`<div>
-          ${filteredWines.length===0&&html`<div style=${{textAlign:"center",color:"#6b7280",padding:40}}>${showWishlist?"Oenskelisten er tom.":showFavorites?"Ingen favoritter enda.":activeFilterCount>0?"Ingen viner matcher valgte filter.":"Ingen viner ennå."}</div>`}
-          ${TYPE_ORDER.filter(function(ty){return grouped[ty]}).map(function(type){
-            var tk="t_"+type;
-            var allW=[];Object.keys(grouped[type]).forEach(function(c){Object.keys(grouped[type][c]).forEach(function(r){Object.keys(grouped[type][c][r]).forEach(function(s){allW=allW.concat(grouped[type][c][r][s])})})});
-            var tot=allW.reduce(function(a,w){return a+(parseInt(w.quantity)||0)},0);
-            return html`<div key=${type} style=${{marginBottom:8}}>
-              <button onClick=${function(){toggleCollapse(tk)}} style=${{width:"100%",display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",background:"rgba(124,58,237,0.2)",border:"1px solid rgba(124,58,237,0.27)",borderRadius:10,cursor:"pointer",marginBottom:4}}>
-                <span style=${{fontWeight:700,fontSize:15,color:"#e9d5ff"}}>${type}</span>
-                <span style=${{color:"#a78bfa",fontSize:12}}>${tot} fl - ${allW.length} ${collapsed[tk]?">":"v"}</span>
-              </button>
-              ${!collapsed[tk]&&Object.keys(grouped[type]).map(function(country){
-                var ck="c_"+type+"_"+country;
-                return html`<div key=${country} style=${{marginLeft:8,marginBottom:4}}>
-                  <button onClick=${function(){toggleCollapse(ck)}} style=${{width:"100%",display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 12px",background:"rgba(255,255,255,0.04)",border:"1px solid #2a1a3a",borderRadius:8,cursor:"pointer",marginBottom:3}}>
-                    <span style=${{fontWeight:600,fontSize:13,color:"#c4b5fd"}}>${country}</span>
-                    <span style=${{color:"#6b7280",fontSize:11}}>${collapsed[ck]?">":" v"}</span>
-                  </button>
-                  ${!collapsed[ck]&&Object.keys(grouped[type][country]).map(function(region){
-                    var rk="r_"+type+"_"+country+"_"+region;
-                    return html`<div key=${region} style=${{marginLeft:8,marginBottom:4}}>
-                      <button onClick=${function(){toggleCollapse(rk)}} style=${{width:"100%",display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 12px",background:"rgba(255,255,255,0.02)",border:"1px solid #1a0d2e",borderRadius:8,cursor:"pointer",marginBottom:3}}>
-                        <span style=${{fontSize:12,color:"#9ca3af"}}>${region}</span>
-                      </button>
-                      ${!collapsed[rk]&&Object.keys(grouped[type][country][region]).map(function(sub){
-                        return html`<div key=${sub||"_"} style=${{marginLeft:8}}>${grouped[type][country][region][sub].map(function(w){return html`<${WineCard} key=${w.id} wine=${w}/>`})}</div>`;
-                      })}
+        ${cellarView==="dashboard"?html`
+          <div style=${{display:"flex",gap:6,marginBottom:10}}>
+            <button onClick=${function(){setShowWishlist(false);setShowFavorites(false);setCellarView("dashboard");setActiveFilter("all")}} style=${{flex:1,padding:"8px",borderRadius:8,background:!showWishlist&&!showFavorites?"rgba(124,58,237,0.3)":"transparent",border:"1px solid "+(!showWishlist&&!showFavorites?"#7c3aed":"#3a2a4a"),color:!showWishlist&&!showFavorites?"#c4b5fd":"#6b7280",cursor:"pointer",fontSize:12,fontWeight:!showWishlist&&!showFavorites?600:400}}>Kjeller (${cellarWines.length})</button>
+            <button onClick=${function(){setShowWishlist(true);setShowFavorites(false);setCellarView("dashboard")}} style=${{flex:1,padding:"8px",borderRadius:8,background:showWishlist?"rgba(245,158,11,0.2)":"transparent",border:"1px solid "+(showWishlist?"rgba(245,158,11,0.4)":"#3a2a4a"),color:showWishlist?"#f59e0b":"#6b7280",cursor:"pointer",fontSize:12,fontWeight:showWishlist?600:400}}>Oenskeliste (${wishlistWines.length})</button>
+            <button onClick=${function(){setShowWishlist(false);setShowFavorites(true);setCellarView("dashboard")}} style=${{flex:1,padding:"8px",borderRadius:8,background:showFavorites?"rgba(251,191,36,0.2)":"transparent",border:"1px solid "+(showFavorites?"rgba(251,191,36,0.4)":"#3a2a4a"),color:showFavorites?"#fbbf24":"#6b7280",cursor:"pointer",fontSize:12,fontWeight:showFavorites?600:400}}>Favoritter (${favoriteWines.length})</button>
+          </div>
+          <div style=${{display:"flex",gap:6,marginBottom:10,alignItems:"center"}}>
+            <input value=${advancedSearch} onChange=${function(e){setAdvancedSearch(e.target.value)}} placeholder=${"Søk vin, produsent..."+(activeFilter!=="all"?(function(){var fo=FILTER_OPTIONS.find(function(o){return o.key===activeFilter});return fo?" \u2022 "+fo.label:"";})():"")} style=${Object.assign({},iS,{marginBottom:0,flex:1})}/>
+            <button onClick=${function(){setShowFilterPanel(true)}} style=${{padding:"10px 14px",borderRadius:8,background:activeFilterCount>0?"rgba(124,58,237,0.4)":"rgba(124,58,237,0.2)",border:"1px solid "+(activeFilterCount>0?"#7c3aed":"rgba(124,58,237,0.35)"),color:"#c4b5fd",cursor:"pointer",fontSize:13,whiteSpace:"nowrap"}}>${"⚙ Filter"+(activeFilterCount>0?" ("+activeFilterCount+")":"")}</button>
+          </div>
+          ${loadingDb?html`<div style=${{textAlign:"center",padding:40,color:"#a78bfa"}}>Laster kjelleren...</div>`:html`<div>
+            ${(function(){
+              var targetWines=showFavorites?favoriteWines:showWishlist?wishlistWines:cellarWines;
+              if(targetWines.length===0)return html`<div style=${{textAlign:"center",color:"#6b7280",padding:40}}>${showWishlist?"Oenskelisten er tom.":showFavorites?"Ingen favoritter enda.":"Ingen viner ennå."}</div>`;
+
+              // Tell drikkeklare per type
+              function countReady(wines,type){
+                return wines.filter(function(w){return w.type===type&&w.status!=="wishlist"}).reduce(function(a,w){var st=drinkWindowStatus(w);return a+(st.label==="Prime"||st.label==="Klar"||st.label==="Drink nå"?parseInt(w.quantity)||0:0)},0);
+              }
+              function countTotal(wines,type){
+                return wines.filter(function(w){return w.type===type&&w.status!=="wishlist"}).reduce(function(a,w){return a+(parseInt(w.quantity)||0)},0);
+              }
+
+              var typeDefs=[
+                {key:"R\u00f8d",icon:"🍷",color:"#ef4444",bg:"rgba(239,68,68,0.12)"},
+                {key:"Hvit",icon:"🥂",color:"#eab308",bg:"rgba(234,179,8,0.12)"},
+                {key:"Ros\u00e9",icon:"🍸",color:"#f472b6",bg:"rgba(244,114,182,0.12)"},
+                {key:"Musserende",icon:"🍾",color:"#a78bfa",bg:"rgba(167,139,250,0.12)"},
+                {key:"Dessert",icon:"🍯",color:"#fb923c",bg:"rgba(251,146,60,0.12)"}
+              ];
+
+              // Drikkeklare totalt
+              var readyWines=cellarWines.filter(function(w){
+                var st=drinkWindowStatus(w);
+                return st.label==="Prime"||st.label==="Klar"||st.label==="Drink nå";
+              });
+              var readyCount=readyWines.reduce(function(a,w){return a+(parseInt(w.quantity)||0)},0);
+
+              return html`<div>
+                ${!showWishlist&&!showFavorites&&readyCount>0&&html`
+                  <div onClick=${function(){setCellarView("drink_ready");setCollapsed({})}} style=${{padding:"14px 16px",borderRadius:14,marginBottom:10,background:"rgba(52,211,153,0.1)",border:"1px solid rgba(52,211,153,0.25)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                    <div style=${{display:"flex",alignItems:"center",gap:10}}>
+                      <div style=${{fontSize:24}}>🍷</div>
+                      <div>
+                        <div style=${{fontWeight:700,fontSize:14,color:"#34d399"}}>Drikkeklare nå</div>
+                        <div style=${{fontSize:11,color:"#9ca3af",marginTop:2}}>${readyCount} flasker · ${readyWines.length} viner</div>
+                      </div>
+                    </div>
+                    <div style=${{color:"#34d399",fontSize:18}}>→</div>
+                  </div>
+                `}
+                <div style=${{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                  ${typeDefs.map(function(td){
+                    var tot=showFavorites?countTotal(favoriteWines,td.key):showWishlist?countTotal(wishlistWines,td.key):countTotal(cellarWines,td.key);
+                    var ready=showWishlist||showFavorites?0:countReady(cellarWines,td.key);
+                    if(tot===0)return null;
+                    return html`<div key=${td.key} onClick=${function(){setCellarView("type_"+td.key);setCollapsed({})}} style=${{padding:"14px",borderRadius:14,background:td.bg,border:"1px solid "+td.color+"33",cursor:"pointer",textAlign:"center"}}>
+                      <div style=${{fontSize:32,marginBottom:4}}>${td.icon}</div>
+                      <div style=${{fontWeight:700,fontSize:14,color:"#f3e8ff"}}>${td.key}</div>
+                      <div style=${{fontSize:13,color:"#a78bfa",marginTop:2,fontWeight:600}}>${tot} fl</div>
+                      ${!showWishlist&&!showFavorites&&ready>0?html`<div style=${{fontSize:11,color:"#34d399",marginTop:2}}>${ready} drikkeklare</div>`:null}
                     </div>`;
                   })}
+                </div>
+              </div>`;
+            })()}
+          </div>`}
+        `:(cellarView==="drink_ready"?html`
+          <div>
+            <button onClick=${function(){setCellarView("dashboard")}} style=${{background:"none",border:"none",color:"#a78bfa",fontSize:13,cursor:"pointer",padding:"4px 0",marginBottom:8}}>← Tilbake til kjeller</button>
+            <div style=${{fontSize:16,fontWeight:700,marginBottom:12,color:"#34d399"}}>🍷 Drikkeklare nå</div>
+            ${(function(){
+              var readyWines=cellarWines.filter(function(w){
+                var st=drinkWindowStatus(w);
+                return st.label==="Prime"||st.label==="Klar"||st.label==="Drink nå";
+              });
+              if(readyWines.length===0)return html`<div style=${{color:"#6b7280",textAlign:"center",padding:30}}>Ingen drikkeklare viner akkurat nå.</div>`;
+              var g={};
+              readyWines.forEach(function(w){
+                var c=w.country||"Ukjent";
+                if(!g[c])g[c]=[];
+                g[c].push(w);
+              });
+              return Object.keys(g).sort().map(function(country){
+                return html`<div key=${country} style=${{marginBottom:6}}>
+                  <div style=${{fontSize:13,fontWeight:600,color:"#c4b5fd",marginBottom:4,paddingLeft:4}}>${country} (${g[country].reduce(function(a,w){return a+(parseInt(w.quantity)||0)},0)} fl)</div>
+                  ${g[country].map(function(w){return html`<${WineCard} key=${w.id} wine=${w}/>`})}
                 </div>`;
-              })}
-            </div>`;
-          })}
-        </div>`}
+              });
+            })()}
+          </div>
+        `:html`
+          <div>
+            <button onClick=${function(){setCellarView("dashboard")}} style=${{background:"none",border:"none",color:"#a78bfa",fontSize:13,cursor:"pointer",padding:"4px 0",marginBottom:8}}>← Tilbake til kjeller</button>
+            ${(function(){
+              var typeName=cellarView.replace("type_","");
+              var targetWines=showFavorites?favoriteWines:showWishlist?wishlistWines:cellarWines;
+              var typeWines=targetWines.filter(function(w){return w.type===typeName});
+              var iconMap={"R\u00f8d":"🍷","Hvit":"🥂","Ros\u00e9":"🍸","Musserende":"🍾","Dessert":"🍯"};
+              var tot=typeWines.reduce(function(a,w){return a+(parseInt(w.quantity)||0)},0);
+
+              if(typeWines.length===0)return html`<div style=${{color:"#6b7280",textAlign:"center",padding:30}}>Ingen ${typeName} viner.</div>`;
+
+              var byCountry={};
+              typeWines.forEach(function(w){
+                var c=w.country||"Ukjent";
+                if(!byCountry[c])byCountry[c]=[];
+                byCountry[c].push(w);
+              });
+
+              return html`<div>
+                <div style=${{fontSize:16,fontWeight:700,marginBottom:12}}>${iconMap[typeName]||""} ${typeName} · ${tot} flasker · ${typeWines.length} viner</div>
+                ${Object.keys(byCountry).sort().map(function(country){
+                  var wines=byCountry[country];
+                  var cc=country+"_"+typeName;
+                  var countryTotal=wines.reduce(function(a,w){return a+(parseInt(w.quantity)||0)},0);
+                  return html`<div key=${country} style=${{marginBottom:6}}>
+                    <button onClick=${function(){toggleCollapse(cc)}} style=${{width:"100%",display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",background:"rgba(255,255,255,0.04)",border:"1px solid #2a1a3a",borderRadius:10,cursor:"pointer",marginBottom:3}}>
+                      <span style=${{fontWeight:600,fontSize:13,color:"#c4b5fd"}}>${country}</span>
+                      <span style=${{color:"#6b7280",fontSize:11}}>${countryTotal} fl ${collapsed[cc]?"▸":"▾"}</span>
+                    </button>
+                    ${!collapsed[cc]&&(function(){
+                      var byRegion={};
+                      wines.forEach(function(w){
+                        var r=w.region||"Ukjent";
+                        if(!byRegion[r])byRegion[r]=[];
+                        byRegion[r].push(w);
+                      });
+                      return Object.keys(byRegion).sort().map(function(region){
+                        var rk=region+"_"+typeName;
+                        return html`<div key=${region} style=${{marginLeft:8,marginBottom:4}}>
+                          <button onClick=${function(){toggleCollapse(rk)}} style=${{width:"100%",display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 12px",background:"rgba(255,255,255,0.02)",border:"1px solid #1a0d2e",borderRadius:8,cursor:"pointer",marginBottom:3}}>
+                            <span style=${{fontSize:12,color:"#9ca3af"}}>${region}</span>
+                          </button>
+                          ${!collapsed[rk]&&byRegion[region].map(function(w){return html`<${WineCard} key=${w.id} wine=${w}/>`})}
+                        </div>`;
+                      });
+                    })()}
+                  </div>`;
+                })}
+              </div>`;
+            })()}
+          </div>
+        `)}
       </div>`}
 
       ${tab===1&&html`<div style=${{display:"flex",flexDirection:"column",height:"calc(100vh - 200px)"}}>
