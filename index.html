@@ -809,8 +809,8 @@ function WineApp(props){
           </div>
           ${loadingDb?html`<div style=${{textAlign:"center",padding:40,color:"#a78bfa"}}>Laster kjelleren...</div>`:html`<div>
             ${(function(){
-              var targetWines=showFavorites?favoriteWines:showWishlist?wishlistWines:cellarWines;
-              if(targetWines.length===0)return html`<div style=${{textAlign:"center",color:"#6b7280",padding:40}}>${showWishlist?"Oenskelisten er tom.":showFavorites?"Ingen favoritter enda.":"Ingen viner ennå."}</div>`;
+              var targetWines=showFavorites?favoriteWines:showWishlist?wishlistWines:filteredWines;
+              if(targetWines.length===0)return html`<div style=${{textAlign:"center",color:"#6b7280",padding:40}}>${showWishlist?"Oenskelisten er tom.":showFavorites?"Ingen favoritter enda.":activeFilterCount>0?"Ingen viner matcher valgte filter.":"Ingen viner ennå."}</div>`;
 
               // Tell drikkeklare per type
               function countReady(wines,type){
@@ -828,8 +828,8 @@ function WineApp(props){
                 {key:"Dessert",icon:"🍯",color:"#fb923c",bg:"rgba(251,146,60,0.12)"}
               ];
 
-              // Drikkeklare totalt
-              var readyWines=cellarWines.filter(function(w){
+              // Drikkeklare totalt (fra filtrerte viner)
+              var readyWines=targetWines.filter(function(w){
                 var st=drinkWindowStatus(w);
                 return st.label==="Prime"||st.label==="Klar"||st.label==="Drink nå";
               });
@@ -850,8 +850,8 @@ function WineApp(props){
                 `}
                 <div style=${{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
                   ${typeDefs.map(function(td){
-                    var tot=showFavorites?countTotal(favoriteWines,td.key):showWishlist?countTotal(wishlistWines,td.key):countTotal(cellarWines,td.key);
-                    var ready=showWishlist||showFavorites?0:countReady(cellarWines,td.key);
+                    var tot=showFavorites?countTotal(favoriteWines,td.key):showWishlist?countTotal(wishlistWines,td.key):countTotal(targetWines,td.key);
+                    var ready=showWishlist||showFavorites?0:countReady(targetWines,td.key);
                     if(tot===0)return null;
                     return html`<div key=${td.key} onClick=${function(){setCellarView("type_"+td.key);setCollapsed({})}} style=${{padding:"14px",borderRadius:14,background:td.bg,border:"1px solid "+td.color+"33",cursor:"pointer",textAlign:"center"}}>
                       <div style=${{fontSize:32,marginBottom:4}}>${td.icon}</div>
@@ -869,7 +869,9 @@ function WineApp(props){
             <button onClick=${function(){setCellarView("dashboard")}} style=${{background:"none",border:"none",color:"#a78bfa",fontSize:13,cursor:"pointer",padding:"4px 0",marginBottom:8}}>← Tilbake til kjeller</button>
             <div style=${{fontSize:16,fontWeight:700,marginBottom:12,color:"#34d399"}}>🍷 Drikkeklare nå</div>
             ${(function(){
-              var readyWines=cellarWines.filter(function(w){
+              var readyWines=filteredWines.filter(function(w){
+                return showFavorites?favoriteWineIds.indexOf(String(w.id))>=0:showWishlist?w.status==="wishlist":w.status!=="wishlist";
+              }).filter(function(w){
                 var st=drinkWindowStatus(w);
                 return st.label==="Prime"||st.label==="Klar"||st.label==="Drink nå";
               });
@@ -893,7 +895,7 @@ function WineApp(props){
             <button onClick=${function(){setCellarView("dashboard")}} style=${{background:"none",border:"none",color:"#a78bfa",fontSize:13,cursor:"pointer",padding:"4px 0",marginBottom:8}}>← Tilbake til kjeller</button>
             ${(function(){
               var typeName=cellarView.replace("type_","");
-              var targetWines=showFavorites?favoriteWines:showWishlist?wishlistWines:cellarWines;
+              var targetWines=showFavorites?favoriteWines:showWishlist?wishlistWines:filteredWines;
               var typeWines=targetWines.filter(function(w){return w.type===typeName});
               var iconMap={"R\u00f8d":"🍷","Hvit":"🥂","Ros\u00e9":"🍸","Musserende":"🍾","Dessert":"🍯"};
               var tot=typeWines.reduce(function(a,w){return a+(parseInt(w.quantity)||0)},0);
