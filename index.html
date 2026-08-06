@@ -51,13 +51,39 @@ var sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
 });
 var currentYear = new Date().getFullYear();
 var TYPE_ORDER = ["R\u00f8d","Hvit","Ros\u00e9","Musserende","Dessert","Annet"];
-var emptyWine = {producer:"",name:"",vintage:"",region:"",subregion:"",country:"",grape:"",type:"R\u00f8d",classification:"",quantity:1,drink_from:"",drink_until:"",temp:"",decant:"",notes:"",food_pairing:"",rating:0,image_data:"",status:"cellar",price:"",price_source:""};
+var emptyWine = {producer:"",name:"",vintage:"",region:"",subregion:"",country:"",grape:"",type:"R\u00f8d",classification:"",quantity:1,volume:"0,75 L",drink_from:"",drink_until:"",temp:"",decant:"",notes:"",food_pairing:"",rating:0,image_data:"",status:"cellar",price:"",price_source:"",alcohol:""};
 var FILTER_OPTIONS = [{key:"all",label:"Alle"},{key:"drink_now",label:"Drink n\u00e5",color:"#fb923c"},{key:"prime",label:"Prime",color:"#a78bfa"},{key:"ready",label:"Klar",color:"#34d399"},{key:"young",label:"For ung",color:"#60a5fa"},{key:"past",label:"Passert",color:"#f87171"}];
 var INIT_MSG = {role:"assistant",content:"Bonsoir! Jeg er din personlige AI-sommelier. Fortell meg hva du skal spise i kveld!"};
 var FAVORITE_FILTERS_KEY = "vinskap-favorite-filters";
 var FAVORITE_WINES_KEY = "vinskap-favorite-wines";
 
 function normalizeText(v){return (v||"").toString().toLowerCase().trim();}
+function normalizeVolumeValue(v){
+  var raw=(v||"").toString().trim();
+  if(!raw)return "0.75l";
+  var compact=raw.toLowerCase().replace(/,/g,".").replace(/\s+/g,"");
+  if(/^\d+(?:\.\d+)?$/.test(compact))compact+="l";
+  return compact;
+}
+function formatVolumeLabel(v){
+  var raw=(v||"").toString().trim();
+  if(!raw)return "0,75 L";
+  var match=raw.replace(/,/g,".").match(/\d+(?:\.\d+)?/);
+  if(!match)return raw;
+  return match[0].replace(/\./g,",")+" L";
+}
+function buildWineSearchLabels(w){
+  var producer=(w.producer||"").trim();
+  var name=(w.name||"").trim();
+  var vintage=(w.vintage||"").toString().trim();
+  var labels=[];
+  var full=[producer,name,vintage].filter(Boolean).join(" ").trim();
+  var nameVintage=[name,vintage].filter(Boolean).join(" ").trim();
+  if(full)labels.push(full);
+  if(nameVintage&&nameVintage!==full)labels.push(nameVintage);
+  if(name&&name!==nameVintage&&name!==full)labels.push(name);
+  return labels;
+}
 function parsePriceValue(v){
   if(v===null||v===undefined)return null;
   var n=parseFloat((v+"").replace(",",".").replace(/[^0-9.]/g,""));
@@ -315,7 +341,7 @@ function WineApp(props){
   async function loadWines(){
     setLoadingDb(true);
     try{
-      var r=await sb.from("wines").select("id,owner_id,producer,name,vintage,region,subregion,country,grape,type,classification,quantity,drink_from,drink_until,temp,decant,notes,food_pairing,rating,status,price,price_source,created_at,updated_at").eq("owner_id",userId).order("created_at",{ascending:false}).limit(500);
+      var r=await sb.from("wines").select("id,owner_id,producer,name,vintage,region,subregion,country,grape,type,classification,quantity,volume,drink_from,drink_until,temp,decant,notes,food_pairing,rating,status,price,price_source,alcohol,created_at,updated_at").eq("owner_id",userId).order("created_at",{ascending:false}).limit(500);
       if(r.error){console.error("loadWines error:",r.error);setAddStatus("DB-feil: "+r.error.message);setLoadingDb(false);return;}
       console.log("Loaded wines:",r.data?r.data.length:0);
       setWines(r.data||[]);
@@ -346,9 +372,9 @@ function WineApp(props){
   }
   async function saveEdit(){
     setEditStatus("Lagrer...");
-    var r=await sb.from("wines").update({producer:editWine.producer,name:editWine.name,vintage:parseInt(editWine.vintage),region:editWine.region,subregion:editWine.subregion,country:editWine.country,grape:editWine.grape,type:editWine.type,classification:editWine.classification,quantity:parseInt(editWine.quantity),drink_from:parseInt(editWine.drink_from),drink_until:parseInt(editWine.drink_until),temp:editWine.temp,decant:editWine.decant,notes:editWine.notes,food_pairing:editWine.food_pairing||"",rating:parseInt(editWine.rating),price:editWine.price||"",price_source:editWine.price_source||""}).eq("id",editWine.id);
+    var r=await sb.from("wines").update({producer:editWine.producer,name:editWine.name,vintage:parseInt(editWine.vintage),region:editWine.region,subregion:editWine.subregion,country:editWine.country,grape:editWine.grape,type:editWine.type,classification:editWine.classification,quantity:parseInt(editWine.quantity),volume:formatVolumeLabel(editWine.volume),drink_from:parseInt(editWine.drink_from),drink_until:parseInt(editWine.drink_until),temp:editWine.temp,decant:editWine.decant,notes:editWine.notes,food_pairing:editWine.food_pairing||"",rating:parseInt(editWine.rating),price:editWine.price||"",price_source:editWine.price_source||"",alcohol:editWine.alcohol||""}).eq("id",editWine.id);
     if(r.error){setEditStatus("Feil: "+r.error.message);return;}
-    setWines(function(p){return p.map(function(w){return w.id===editWine.id?editWine:w})});
+    setWines(function(p){return p.map(function(w){return w.id===editWine.id?Object.assign({},editWine,{volume:formatVolumeLabel(editWine.volume)}):w})});
     setEditStatus("Lagret!");setTimeout(function(){setEditWine(null);setEditStatus("")},1200);
   }
   async function deleteWine(wine){
@@ -380,7 +406,7 @@ function WineApp(props){
   }
   function removeSavedFilter(id){setSavedFilters(function(prev){return prev.filter(function(f){return f.id!==id})});}
   function clearAllFilters(){setAdvancedSearch("");setFilterGrape("");setFilterRegion("");setFilterCountry("");setFilterProducer("");setPriceMin("");setPriceMax("");setActiveFilter("all");}
-  var AI_WINE_PROMPT='Du er en vinekspert. Returner ALLTID gyldig JSON og INGENTING annet.\n\nTo mulige svar-formater:\n\nFormat A - hvis du er usikker paa vintype eller aargang mangler:\n{"questions":["Er dette roedvin eller hvitvin?","Hva er aargangen?"]}\n\nFormat B - hvis du har nok info:\n{"producer":"","name":"","vintage":2020,"region":"","subregion":"","country":"","grape":"","type":"R\u00f8d","classification":"","drink_from":2024,"drink_until":2035,"temp":"16-18C","decant":"1 time","notes":"","food_pairing":"3 retter","rating":88,"price":"ca 200 NOK","price_source":"Vinmonopolet","confidence":"high","type_reasoning":""}\n\nType skal vaere: R\u00f8d, Hvit, Ros\u00e9, Musserende eller Dessert.\nRating: 0-100 Robert Parker-skala.\nPris: Estimer NOK-pris, helst fra Vinmonopolet.\n\nRegler for vintype:\n- Groenn/klar flaske + hvite druer = Hvit\n- Moerk flaske + roede druer = R\u00f8d\n- Bourgogne UTEN Blanc/Rouge = spoer brukeren (Format A)\n- Cotes du Rhone i groenn flaske = Hvit';
+  var AI_WINE_PROMPT='Du er en vinekspert. Returner ALLTID gyldig JSON og INGENTING annet.\n\nTo mulige svar-formater:\n\nFormat A - hvis du er usikker paa vintype eller aargang mangler:\n{"questions":["Er dette roedvin eller hvitvin?","Hva er aargangen?"]}\n\nFormat B - hvis du har nok info:\n{"producer":"","name":"","vintage":2020,"region":"","subregion":"","country":"","grape":"","type":"R\u00f8d","classification":"","drink_from":2024,"drink_until":2035,"temp":"16-18C","decant":"1 time","notes":"","food_pairing":"3 retter","rating":88,"price":"ca 200 NOK","price_source":"Vinmonopolet","alcohol":"13.5","confidence":"high","type_reasoning":""}\n\nType skal vaere: R\u00f8d, Hvit, Ros\u00e9, Musserende eller Dessert.\nRating: 0-100 Robert Parker-skala.\nPris: Estimer NOK-pris, helst fra Vinmonopolet.\nAlcohol: Alkoholprosent, typisk 5-20. Angi som tall med én desimal (f.eks. 13.5).\n\nRegler for vintype:\n- Groenn/klar flaske + hvite druer = Hvit\n- Moerk flaske + roede druer = R\u00f8d\n- Bourgogne UTEN Blanc/Rouge = spoer brukeren (Format A)\n- Cotes du Rhone i groenn flaske = Hvit';
 
   async function handleImage(e){
     var file=e.target.files[0];if(!file)return;
@@ -451,8 +477,8 @@ function WineApp(props){
       var t=await callClaude(AI_WINE_PROMPT,[{role:"user",content:"Oppdater all info for denne vinen: "+searchText}],1500);
       var p=JSON.parse((t||"{}").replace(/```json|```/g,"").trim());
       if(p.questions){setRefreshLoading(false);return;}
-      var updated=Object.assign({},wine,p,{rating:parseInt(p.rating)||wine.rating});
-      await sb.from("wines").update({region:updated.region,subregion:updated.subregion,grape:updated.grape,classification:updated.classification,drink_from:parseInt(updated.drink_from),drink_until:parseInt(updated.drink_until),temp:updated.temp,decant:updated.decant,notes:updated.notes,food_pairing:updated.food_pairing,rating:parseInt(updated.rating),price:updated.price||"",price_source:updated.price_source||""}).eq("id",wine.id);
+      var updated=Object.assign({},wine,p,{rating:parseInt(p.rating)||wine.rating,volume:formatVolumeLabel(wine.volume)});
+      await sb.from("wines").update({region:updated.region,subregion:updated.subregion,grape:updated.grape,classification:updated.classification,drink_from:parseInt(updated.drink_from),drink_until:parseInt(updated.drink_until),temp:updated.temp,decant:updated.decant,notes:updated.notes,food_pairing:updated.food_pairing,rating:parseInt(updated.rating),price:updated.price||"",price_source:updated.price_source||"",alcohol:updated.alcohol||""}).eq("id",wine.id);
       setWines(function(prev){return prev.map(function(w){return w.id===wine.id?updated:w})});
       setSelectedWine(updated);
       setAddStatus("Vin oppdatert!");setTimeout(function(){setAddStatus("")},3000);
@@ -475,10 +501,11 @@ function WineApp(props){
     var name=(newWine.name||"").toLowerCase().trim();
     var vintage=parseInt(newWine.vintage);
     var producer=(newWine.producer||"").toLowerCase().trim();
+    var volume=normalizeVolumeValue(newWine.volume);
     return wines.find(function(w){
       var wName=(w.name||"").toLowerCase().trim();
       var wProducer=(w.producer||"").toLowerCase().trim();
-      return wName===name && parseInt(w.vintage)===vintage && wProducer===producer;
+      return wName===name && parseInt(w.vintage)===vintage && wProducer===producer && normalizeVolumeValue(w.volume)===volume;
     });
   }
 
@@ -496,7 +523,7 @@ function WineApp(props){
     var st=targetStatus||"cellar";
     setAddStatus("Lagrer...");setDuplicateWine(null);
     var imgSmall=newWine.image_data||lastImageData||"";
-    var wine={owner_id:userId,producer:newWine.producer,name:newWine.name,vintage:parseInt(newWine.vintage),quantity:parseInt(newWine.quantity)||1,region:newWine.region,subregion:newWine.subregion,country:newWine.country,grape:newWine.grape,type:newWine.type,classification:newWine.classification,drink_from:parseInt(newWine.drink_from)||parseInt(newWine.vintage)+2,drink_until:parseInt(newWine.drink_until)||parseInt(newWine.vintage)+15,temp:newWine.temp||"16-18C",decant:newWine.decant||"Nei",notes:newWine.notes,food_pairing:newWine.food_pairing||"",rating:parseInt(newWine.rating)||0,image_data:imgSmall,status:st,price:newWine.price||"",price_source:newWine.price_source||""};
+    var wine={owner_id:userId,producer:newWine.producer,name:newWine.name,vintage:parseInt(newWine.vintage),quantity:parseInt(newWine.quantity)||1,volume:formatVolumeLabel(newWine.volume),region:newWine.region,subregion:newWine.subregion,country:newWine.country,grape:newWine.grape,type:newWine.type,classification:newWine.classification,drink_from:parseInt(newWine.drink_from)||parseInt(newWine.vintage)+2,drink_until:parseInt(newWine.drink_until)||parseInt(newWine.vintage)+15,temp:newWine.temp||"16-18C",decant:newWine.decant||"Nei",notes:newWine.notes,food_pairing:newWine.food_pairing||"",rating:parseInt(newWine.rating)||0,image_data:imgSmall,status:st,price:newWine.price||"",price_source:newWine.price_source||"",alcohol:newWine.alcohol||""};
     var r=await sb.from("wines").insert(wine).select().single();
     if(r.error){setAddStatus("Feil: "+r.error.message);return;}
     setWines(function(p){return[r.data].concat(p)});
@@ -656,7 +683,7 @@ function WineApp(props){
         <div style=${{flex:1,minWidth:0}}>
           ${w.producer&&html`<div style=${{color:"#a78bfa",fontSize:11}}>${w.producer}</div>`}
           <div style=${{fontWeight:600,fontSize:13}}>${w.name}</div>
-          <div style=${{color:"#9ca3af",fontSize:11,marginTop:2}}>${w.vintage} ${w.grape?"- "+w.grape:""}${w.rating>0?" | "+w.rating+"p":""}</div>
+          <div style=${{color:"#9ca3af",fontSize:11,marginTop:2}}>${w.vintage} ${w.grape?"- "+w.grape:""}${w.rating>0?" | "+w.rating+"p":""}${formatVolumeLabel(w.volume)?" | "+formatVolumeLabel(w.volume):""}</div>
         </div>
         <div style=${{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:3,flexShrink:0}}>
           <button onClick=${function(e){e.stopPropagation();toggleFavoriteWine(w.id)}} style=${{background:"transparent",border:"none",color:isFavorite?"#fbbf24":"#6b7280",fontSize:16,cursor:"pointer",padding:0,minHeight:"auto"}}>${isFavorite?"★":"☆"}</button>
@@ -668,6 +695,7 @@ function WineApp(props){
         <div style=${{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,fontSize:11,marginBottom:8}}>
           <div><span style=${{color:"#9ca3af"}}>Drikkevindu</span><br/>${w.drink_from}-${w.drink_until}</div>
           <div><span style=${{color:"#9ca3af"}}>Temperatur</span><br/>${w.temp||"Ikke satt"}</div>
+          <div><span style=${{color:"#9ca3af"}}>Volum</span><br/>${formatVolumeLabel(w.volume)}</div>
           <div><span style=${{color:"#9ca3af"}}>Dekantering</span><br/>${w.decant||"Ikke satt"}</div>
           ${w.rating>0&&html`<div><span style=${{color:"#9ca3af"}}>Poeng</span><br/><span style=${{fontWeight:700,color:w.rating>=90?"#34d399":w.rating>=85?"#a78bfa":"#f3e8ff"}}>${w.rating}/100</span></div>`}
           ${w.price&&html`<div><span style=${{color:"#9ca3af"}}>Pris</span><br/>${w.price}${w.price_source?" ("+w.price_source+")":""}</div>`}
@@ -691,6 +719,7 @@ function WineApp(props){
       <div style=${{display:"flex",justifyContent:"space-between",marginBottom:16}}><div style=${{fontSize:16,fontWeight:700}}>Rediger vin</div><button onClick=${function(){setEditWine(null)}} style=${{background:"none",border:"none",color:"#9ca3af",fontSize:20,cursor:"pointer"}}>X</button></div>
       ${inp("producer","Produsent",editWine,setEditWine)}${inp("name","Vinnavn",editWine,setEditWine)}
       <div style=${{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>${numI("vintage","Aargang",editWine,setEditWine)}${numI("quantity","Antall",editWine,setEditWine)}</div>
+      ${inp("volume","Volum (f.eks. 0,75 L eller 1,5 L)",editWine,setEditWine)}
       ${inp("region","Region",editWine,setEditWine)}${inp("subregion","Underdistrikt",editWine,setEditWine)}${inp("country","Land",editWine,setEditWine)}${inp("grape","Druer",editWine,setEditWine)}${inp("classification","Klassifikasjon",editWine,setEditWine)}${selI(editWine,setEditWine)}
       <div style=${{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>${numI("drink_from","Drikk fra",editWine,setEditWine)}${numI("drink_until","Drikk innen",editWine,setEditWine)}</div>
       ${inp("temp","Temperatur",editWine,setEditWine)}${inp("decant","Dekantering",editWine,setEditWine)}${inp("notes","Smaksnotater",editWine,setEditWine)}${inp("food_pairing","Passer til (mat)",editWine,setEditWine)}${inp("price","Pris (NOK)",editWine,setEditWine)}
@@ -701,12 +730,31 @@ function WineApp(props){
   </div>`;
 
   function goToWine(searchText){
-    var lower=searchText.toLowerCase();
-    var found=wines.find(function(w){
-      var full=((w.producer||"")+" "+w.name+" "+(w.vintage||"")).toLowerCase();
-      return full.indexOf(lower)>=0||lower.indexOf((w.name||"").toLowerCase())>=0;
+    var target=normalizeText(searchText);
+    if(!target)return;
+    var found=null;
+    wines.some(function(w){
+      var labels=buildWineSearchLabels(w).map(normalizeText);
+      if(labels.some(function(label){return label===target;})){found=w;return true;}
+      return false;
     });
-    if(found){setTab(0);setShowWishlist(false);setShowFavorites(false);setActiveFilter("all");setSelectedWine(found);}
+    if(!found){
+      wines.some(function(w){
+        var labels=buildWineSearchLabels(w).map(normalizeText);
+        if(labels.some(function(label){return label.indexOf(target)>=0||target.indexOf(label)>=0;})){found=w;return true;}
+        return false;
+      });
+    }
+    if(found){
+      setTab(0);
+      setShowWishlist(found.status==="wishlist");
+      setShowFavorites(false);
+      setActiveFilter("all");
+      setCollapsed({});
+      setCellarView("type_"+(found.type||"Annet"));
+      setSelectedWine(found);
+      if(!found.image_data)loadWineImage(found.id);
+    }
   }
   function renderChatWithLinks(text){
     var parts=text.split(/\[([^\]]+)\]/g);
@@ -722,6 +770,7 @@ function WineApp(props){
       <div style=${{padding:12,background:"rgba(255,255,255,0.04)",border:"1px solid #2a1a3a",borderRadius:10,marginBottom:16}}>
         <div style=${{color:"#a78bfa",fontSize:11}}>${duplicateWine.producer}</div>
         <div style=${{fontWeight:600,fontSize:14}}>${duplicateWine.name} ${duplicateWine.vintage}</div>
+        <div style=${{color:"#9ca3af",fontSize:12,marginTop:4}}>Volum: ${formatVolumeLabel(duplicateWine.volume)}</div>
         <div style=${{color:"#9ca3af",fontSize:12,marginTop:4}}>Har naa: ${duplicateWine.quantity} flasker</div>
         <div style=${{color:"#34d399",fontSize:12}}>Legger til: ${parseInt(newWine.quantity)||1} flasker = ${(parseInt(duplicateWine.quantity)||0)+(parseInt(newWine.quantity)||1)} totalt</div>
       </div>
@@ -995,6 +1044,7 @@ function WineApp(props){
         ${inp("producer","Produsent",newWine,setNewWine)}
         ${inp("name","Vinnavn / Cuvee *",newWine,setNewWine)}
         <div style=${{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>${numI("vintage","Aargang *",newWine,setNewWine)}${numI("quantity","Antall",newWine,setNewWine)}</div>
+        ${inp("volume","Volum (f.eks. 0,75 L eller 1,5 L)",newWine,setNewWine)}
         ${inp("region","Region / Appellation",newWine,setNewWine)}
         ${inp("subregion","Underdistrikt",newWine,setNewWine)}
         ${inp("country","Land",newWine,setNewWine)}
