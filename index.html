@@ -314,6 +314,7 @@ function WineApp(props){
   var sCoF=useState(""),filterCountry=sCoF[0],setFilterCountry=sCoF[1];
   var sPrF=useState(""),filterProducer=sPrF[0],setFilterProducer=sPrF[1];
   var chatEndRef=useRef(null);
+  var chatInputRef=useRef(null);
   var fileRef=useRef(null);
   var editFileRef=useRef(null);
 
@@ -327,6 +328,7 @@ function WineApp(props){
     }catch(_){}
   },[]);
   useEffect(function(){if(chatEndRef.current)chatEndRef.current.scrollIntoView({behavior:"smooth"})},[messages]);
+  useEffect(function(){if(selectedWine&&tab===0){var el=document.getElementById("wine-"+selectedWine.id);if(el)el.scrollIntoView({behavior:"smooth",block:"center"});}},[selectedWine]);
   useEffect(function(){setNotifications(buildNotifications(wines.filter(function(w){return w.status!=="wishlist"})));},[wines]);
   useEffect(function(){try{localStorage.setItem(FAVORITE_FILTERS_KEY,JSON.stringify(savedFilters));}catch(_){ }},[savedFilters]);
   useEffect(function(){try{localStorage.setItem(FAVORITE_WINES_KEY,JSON.stringify(favoriteWineIds));}catch(_){ }},[favoriteWineIds]);
@@ -551,6 +553,7 @@ function WineApp(props){
   async function sendMessage(){
     if(!chatInput.trim()||chatLoading)return;
     var userMsg=chatInput.trim();setChatInput("");
+    if(chatInputRef.current)chatInputRef.current.style.height="auto";
     setMessages(function(p){return p.concat([{role:"user",content:userMsg}])});setChatLoading(true);
     try{
       await sb.from("chat_history").insert({user_id:userId,role:"user",content:userMsg});
@@ -677,7 +680,7 @@ function WineApp(props){
     var w=p.wine,st=drinkWindowStatus(w),isSel=selectedWine&&selectedWine.id===w.id;
     var isWish=w.status==="wishlist";
     var isFavorite=favoriteWineIds.indexOf(String(w.id))>=0;
-    return html`<div onClick=${function(){if(isSel){setSelectedWine(null)}else{setSelectedWine(w);if(!w.image_data)loadWineImage(w.id);}}} style=${{background:isWish?"rgba(245,158,11,0.06)":"rgba(255,255,255,0.04)",border:"1px solid "+(isSel?"#7c3aed44":isWish?"rgba(245,158,11,0.2)":"#2a1a3a"),borderRadius:10,padding:"10px 12px",marginBottom:6,cursor:"pointer"}}>
+    return html`<div id=${"wine-"+w.id} onClick=${function(){if(isSel){setSelectedWine(null)}else{setSelectedWine(w);if(!w.image_data)loadWineImage(w.id);}}} style=${{background:isWish?"rgba(245,158,11,0.06)":"rgba(255,255,255,0.04)",border:"1px solid "+(isSel?"#7c3aed44":isWish?"rgba(245,158,11,0.2)":"#2a1a3a"),borderRadius:10,padding:"10px 12px",marginBottom:6,cursor:"pointer"}}>
       <div style=${{display:"flex",gap:10,alignItems:"flex-start"}}>
         ${w.image_data&&html`<img src=${w.image_data} style=${{width:40,height:54,borderRadius:6,objectFit:"cover",border:"1px solid #2a1a3a",flexShrink:0}}/>`}
         <div style=${{flex:1,minWidth:0}}>
@@ -750,6 +753,13 @@ function WineApp(props){
       setShowWishlist(found.status==="wishlist");
       setShowFavorites(false);
       setActiveFilter("all");
+      setAdvancedSearch("");
+      setFilterGrape("");
+      setFilterRegion("");
+      setFilterCountry("");
+      setFilterProducer("");
+      setPriceMin("");
+      setPriceMax("");
       setCollapsed({});
       setCellarView("type_"+(found.type||"Annet"));
       setSelectedWine(found);
@@ -1004,7 +1014,7 @@ function WineApp(props){
           <div ref=${chatEndRef}/>
         </div>
         <div style=${{display:"flex",gap:8,paddingTop:8,borderTop:"1px solid #2a1a3a"}}>
-          <input value=${chatInput} onChange=${function(e){setChatInput(e.target.value)}} onKeyDown=${function(e){if(e.key==="Enter")sendMessage()}} placeholder="Hva skal du spise?" style=${{flex:1,padding:"12px 14px",borderRadius:24,border:"1px solid #3a2a4a",background:"#1e1228",color:"#f3e8ff",fontSize:14}}/>
+          <textarea ref=${chatInputRef} value=${chatInput} rows=${1} onChange=${function(e){setChatInput(e.target.value);e.target.style.height="auto";e.target.style.height=Math.min(e.target.scrollHeight,150)+"px";}} onKeyDown=${function(e){if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage();}}} placeholder="Hva skal du spise?" style=${{flex:1,padding:"12px 14px",borderRadius:20,border:"1px solid #3a2a4a",background:"#1e1228",color:"#f3e8ff",fontSize:14,lineHeight:1.5,resize:"none",overflowY:"auto",maxHeight:150}}/>
           <button onClick=${sendMessage} disabled=${chatLoading} style=${{padding:"12px 16px",borderRadius:24,background:chatLoading?"#3a2a4a":"linear-gradient(135deg,#7c3aed,#5b21b6)",border:"none",color:"white",cursor:"pointer",fontSize:18}}>${"\u2192"}</button>
         </div>
       </div>`}
